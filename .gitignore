@@ -1,0 +1,10 @@
+# 第三方工具本体（可从各自仓库/发布页重新获取）
+rtk.exe
+Save-The-Token-main/
+context-compress-main/
+
+# bench 生成物（run_bench.py 可再生）
+bench/repo*/
+bench/fixtures/
+__pycache__/
+*.pyc
