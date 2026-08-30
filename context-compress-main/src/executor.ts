@@ -1,0 +1,760 @@
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Config } from "./config.js";
+import { applyCommandFilter } from "./filters.js";
+import { applyFormatFilter } from "./format-filter.js";
+import { debug } from "./logger.js";
+import { findRuntimeBinary, type RuntimeMap } from "./runtime/index.js";
+import type { ExecFileOptions, ExecOptions, ExecResult } from "./types.js";
+import { formatBytes } from "./utils.js";
+
+const DEFAULT_TIMEOUT = 30_000;
+
+/** Human-readable timeout for kill messages — "1.5s" beats rounding to "2s". */
+function formatDuration(ms: number): string {
+	const s = ms / 1000;
+	return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
+
+/** Strip ANSI escape codes from output */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape detection requires \x1b
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape detection requires \x1b
+const ANSI_RE_G = /\x1b\[[0-9;]*[a-zA-Z]/g;
+function stripAnsi(str: string): string {
+	return str.replace(ANSI_RE_G, "");
+}
+
+/** Safe base environment variables */
+const SAFE_ENV_KEYS = [
+	"PATH",
+	"HOME",
+	"USER",
+	"SHELL",
+	"TMPDIR",
+	"TERM",
+	"LANG",
+	// Windows
+	"SYSTEMROOT",
+	"COMSPEC",
+	"PATHEXT",
+	"USERPROFILE",
+	"APPDATA",
+	"LOCALAPPDATA",
+	"PROGRAMFILES",
+	"PROGRAMFILES(X86)",
+	"COMMONPROGRAMFILES",
+	"WINDIR",
+];
+
+/**
+ * Build a safe environment for subprocesses.
+ * Security fix: credential passthrough is opt-in via config.passthroughEnvVars.
+ */
+function buildEnv(config: Config): Record<string, string> {
+	const env: Record<string, string> = {};
+
+	// Copy safe base variables
+	for (const key of SAFE_ENV_KEYS) {
+		const value = process.env[key];
+		if (value) {
+			env[key] = value;
+		}
+	}
+
+	// Deterministic settings
+	env.LANG = "en_US.UTF-8";
+	env.PYTHONDONTWRITEBYTECODE = "1";
+	env.PYTHONUNBUFFERED = "1";
+	env.NO_COLOR = "1";
+
+	// Opt-in passthrough (security fix: default is empty)
+	for (const key of config.passthroughEnvVars) {
+		const value = process.env[key];
+		if (value) {
+			env[key] = value;
+		}
+	}
+
+	return env;
+}
+
+/** Kill process and its children */
+function killProcessTree(pid: number): void {
+	try {
+		if (process.platform === "win32") {
+			execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)]);
+		} else {
+			// Kill process group
+			process.kill(-pid, "SIGKILL");
+		}
+	} catch {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// Process already exited
+		}
+	}
+}
+
+/**
+ * Strip progress/spinner lines that add no informational value.
+ * Removes: percentage bars, spinner characters, ANSI escape codes, download progress.
+ */
+function stripProgressLines(output: string): string {
+	const lines = output.split("\n");
+	const filtered = lines.filter((l) => {
+		const trimmed = l.trim();
+		// ANSI escape sequences (colors, cursor movement)
+		if (ANSI_RE.test(l) && trimmed.replace(ANSI_RE_G, "").trim() === "") return false;
+		// Pure progress bars: [=====>    ] 45%  or  ████░░░░ 45%
+		// Must contain an actual progress marker — otherwise plain numeric
+		// lines ("12345") and separators ("----") would be deleted too.
+		if (
+			/^[\s[│├└─═━▓░█▒▏▎▍▌▋▊▉\]>=#\-.\d%]+$/.test(trimmed) &&
+			trimmed.length > 3 &&
+			/%|=>|[▓░█▒▏▎▍▌▋▊▉]/.test(trimmed)
+		)
+			return false;
+		// Spinner lines: ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ or - \ | /
+		if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\-\\|/]\s/.test(trimmed)) return false;
+		// Download progress: "Downloading 45.2 MB / 100.3 MB"
+		if (/(?:downloading|uploading|fetching|resolving)\s+[\d.]+\s*[kmg]?b/i.test(trimmed))
+			return false;
+		// ETA/speed lines: "2.3 MB/s, ETA 5s"
+		if (/\d+\.?\d*\s*[kmg]?b\/s/i.test(trimmed) && /eta|remaining/i.test(trimmed)) return false;
+		return true;
+	});
+	return filtered.join("\n");
+}
+
+/**
+ * Deduplicate consecutive repeated lines.
+ * Replaces N identical consecutive lines with "line (×N)".
+ */
+function deduplicateLines(output: string): string {
+	const lines = output.split("\n");
+	if (lines.length < 3) return output;
+
+	const result: string[] = [];
+	let prevLine = lines[0];
+	let count = 1;
+
+	for (let i = 1; i < lines.length; i++) {
+		if (lines[i] === prevLine && prevLine.trim().length > 0) {
+			count++;
+		} else {
+			if (count > 2) {
+				result.push(prevLine);
+				result.push(`  ... (×${count} identical lines)`);
+			} else {
+				for (let j = 0; j < count; j++) result.push(prevLine);
+			}
+			prevLine = lines[i];
+			count = 1;
+		}
+	}
+	// Flush last group
+	if (count > 2) {
+		result.push(prevLine);
+		result.push(`  ... (×${count} identical lines)`);
+	} else {
+		for (let j = 0; j < count; j++) result.push(prevLine);
+	}
+
+	return result.join("\n");
+}
+
+/**
+ * Group similar error/warning lines by pattern.
+ * Collapses "ERROR: foo at line 1", "ERROR: foo at line 2" → "ERROR: foo (×2 occurrences, lines: 1, 2)"
+ */
+function groupErrorLines(output: string): string {
+	const lines = output.split("\n");
+	if (lines.length < 5) return output;
+
+	// Detect error/warning patterns
+	const ERROR_RE =
+		/^(.*?(?:error|warning|Error|Warning|ERR|WARN)[:\s])\s*(.+?)(?:\s+(?:at|in|on)\s+(?:line\s+)?(\d+))?$/i;
+	const errorGroups = new Map<string, { message: string; locations: string[]; count: number }>();
+	const resultLines: string[] = [];
+	let groupedCount = 0;
+
+	// Keys in the order they were first seen, so a line can be put back where it
+	// was if its group turns out to be a singleton.
+	const keyOf: Array<string | null> = [];
+	for (const line of lines) {
+		const match = line.match(ERROR_RE);
+		if (match) {
+			const prefix = match[1].trim();
+			const msg = match[2].trim();
+			const key = `${prefix}|${msg}`;
+			keyOf.push(key);
+
+			const existing = errorGroups.get(key);
+			if (existing) {
+				existing.count++;
+				if (match[3]) existing.locations.push(match[3]);
+				groupedCount++;
+				continue;
+			}
+			errorGroups.set(key, {
+				message: `${prefix} ${msg}`,
+				locations: match[3] ? [match[3]] : [],
+				count: 1,
+			});
+			groupedCount++;
+			continue;
+		}
+		keyOf.push(null);
+		resultLines.push(line);
+	}
+
+	// Only apply grouping if it actually reduces output
+	if (groupedCount < 4 || errorGroups.size === groupedCount) return output;
+
+	// A line that appears once is not a repetition, and moving it to a trailing
+	// block costs its context: four distinct Jest failures were separated from the
+	// `●` names directly above them to save four lines. Put singletons back where
+	// they were and group only what actually repeats.
+	resultLines.length = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const key = keyOf[i];
+		if (key === null) {
+			resultLines.push(lines[i]);
+			continue;
+		}
+		const group = errorGroups.get(key);
+		if (group && group.count === 1) {
+			resultLines.push(lines[i]);
+			errorGroups.delete(key);
+		}
+	}
+	if (errorGroups.size === 0) return output;
+
+	const grouped: string[] = [];
+	for (const [, group] of errorGroups) {
+		let line = `${group.message} (×${group.count})`;
+		if (group.locations.length > 0) {
+			line += ` [lines: ${group.locations.join(", ")}]`;
+		}
+		grouped.push(line);
+	}
+
+	if (grouped.length > 0) {
+		resultLines.push("");
+		resultLines.push(`── Grouped errors/warnings (${groupedCount} → ${errorGroups.size}) ──`);
+		// Append one at a time. `push(...grouped)` passes every element as an
+		// argument, which overflows the call stack past roughly 125k groups and
+		// throws RangeError from inside the child's close listener — the promise
+		// never settles and the uncaughtException handler exits the whole server.
+		// `tsc`/`eslint`/`cargo` on a large monorepo reaches that count.
+		for (const line of grouped) resultLines.push(line);
+	}
+
+	// The comment above says "only if it actually reduces output", but the guard
+	// counted lines. Measure what it claims to measure.
+	const result = resultLines.join("\n");
+	return Buffer.byteLength(result) < Buffer.byteLength(output) ? result : output;
+}
+
+/**
+ * Smart truncation: keep 60% head + 40% tail, snapping to line boundaries.
+ */
+/** Byte-truncate without splitting a multi-byte character. */
+function sliceUtf8(text: string, maxBytes: number): string {
+	const buffer = Buffer.from(text, "utf8");
+	if (buffer.length <= maxBytes) return text;
+	let cut = maxBytes;
+	while (cut > 0 && (buffer[cut] & 0xc0) === 0x80) cut--;
+	return buffer.subarray(0, cut).toString("utf8");
+}
+
+function smartTruncate(output: string, maxBytes: number): string {
+	if (Buffer.byteLength(output) <= maxBytes) return output;
+
+	const lines = output.split("\n");
+	const headRatio = 0.6;
+	// Reserve room for the separator so the RESULT fits maxBytes. Budgeting only
+	// the retained lines pushed the response past the cap by the marker's length,
+	// which made a byte budget that is supposed to be a guarantee approximate.
+	const SEPARATOR_RESERVE = 160;
+	const budget = Math.max(0, maxBytes - SEPARATOR_RESERVE);
+
+	// A line longer than the head target can be admitted by neither loop, so it
+	// would vanish with only a line count to show for it. Find it BEFORE admitting
+	// anything and hold back room for a sample: when short lines filled the budget
+	// on their own there was nothing left, and a 2MB line ending in the build's
+	// verdict disappeared from a response that had room for none of it.
+	let oversizeIndex = -1;
+	let oversizeBytes = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const size = Buffer.byteLength(lines[i]);
+		if (size > oversizeBytes) {
+			oversizeBytes = size;
+			oversizeIndex = i;
+		}
+	}
+	const hasOversize = oversizeBytes > Math.floor(budget * headRatio);
+	const sampleReserve = hasOversize ? Math.floor(budget / 8) : 0;
+	const admitBudget = budget - sampleReserve;
+	const headTarget = Math.floor(admitBudget * headRatio);
+	const tailTarget = admitBudget - headTarget;
+
+	// Collect head lines
+	let headBytes = 0;
+	let headEnd = 0;
+	for (let i = 0; i < lines.length; i++) {
+		const lineBytes = Buffer.byteLength(lines[i]) + 1; // +1 for newline
+		if (headBytes + lineBytes > headTarget) break;
+		headBytes += lineBytes;
+		headEnd = i + 1;
+	}
+
+	// Collect tail lines
+	let tailBytes = 0;
+	let tailStart = lines.length;
+	for (let i = lines.length - 1; i >= headEnd; i--) {
+		const lineBytes = Buffer.byteLength(lines[i]) + 1;
+		if (tailBytes + lineBytes > tailTarget) break;
+		tailBytes += lineBytes;
+		tailStart = i;
+	}
+
+	const headText = lines.slice(0, headEnd).join("\n");
+	const tailText = lines.slice(tailStart).join("\n");
+	const truncatedLines = lines.length - headEnd - (lines.length - tailStart);
+	const truncatedBytes = Buffer.byteLength(output) - headBytes - tailBytes;
+	const separator = `\n... [${truncatedLines} lines / ${formatBytes(truncatedBytes)} truncated — showing first ${headEnd} + last ${lines.length - tailStart} lines] ...\n`;
+
+	let result = headText + separator + tailText;
+
+	// The oversized line is the one thing the line path structurally cannot show,
+	// and it is often where the answer is: a minified bundle, a single-line JSON
+	// payload, or a build's final verdict appended to a 2MB line. Two earlier
+	// attempts failed in opposite directions — dropping it entirely returned 110
+	// bytes for a 512KB bundle, and replacing the line result with a byte slice
+	// returned a build log 99.0% base64. Show the lines that fit AND a bounded
+	// sample of that one line.
+	//
+	// The cap is tied to what legitimately fit, so the sample can never crowd out
+	// real content; capped at an eighth of the budget; floored at 512 bytes, which
+	// is enough to identify any format without being worth crowding out. Sizing it
+	// off the budget alone was the same mistake in a smaller costume: with 51 bytes
+	// of useful lines it still returned 2,048 bytes of blob. Filling the rest of
+	// the budget is deliberately not a goal — the marker states how much was
+	// dropped, and the executor indexes the full text before truncating.
+	// Only when that line was actually dropped — if admission kept it, it is
+	// already in the response.
+	if (hasOversize && oversizeIndex >= headEnd && oversizeIndex < tailStart) {
+		const open = "... [sample of the oversized line] ...\n";
+		const middle = "\n... [sample skips ahead] ...\n";
+		const close = "\n... [sample ends] ...\n";
+		const overhead = Buffer.byteLength(open) + Buffer.byteLength(middle) + Buffer.byteLength(close);
+		const room = maxBytes - Buffer.byteLength(result) - overhead;
+		const cap = Math.min(
+			room,
+			Math.max(512, Math.min(Math.floor(budget / 8), headBytes + tailBytes)),
+		);
+		if (cap > 0) {
+			// Sample the LINE, not the dropped region. The region can hold thousands
+			// of ordinary short lines around it, and slicing the region returned 40
+			// bytes of that filler and none of the line it exists to show.
+			const line = lines[oversizeIndex];
+			const half = Math.max(1, Math.floor(cap / 2));
+			const bytes = Buffer.from(line, "utf8");
+			let sample: string;
+			if (bytes.length <= cap) {
+				sample = line;
+			} else {
+				const back = bytes.subarray(bytes.length - half);
+				let cut = 0;
+				while (cut < back.length && (back[cut] & 0xc0) === 0x80) cut++;
+				sample = `${sliceUtf8(line, half)}${middle}${back.subarray(cut).toString("utf8")}`;
+			}
+			if (sample) result = headText + separator + open + sample + close + tailText;
+		}
+	}
+
+	// The reserve is a generous estimate; clamp in case the separator ran long.
+	if (Buffer.byteLength(result) <= maxBytes) return result;
+	const marker = "\n... [truncated] ...";
+	const markerBytes = Buffer.byteLength(marker);
+	// Appending a marker that does not itself fit returned 20 bytes for a 5-byte
+	// budget — 400% of a cap this function documents as a guarantee.
+	if (markerBytes >= maxBytes) return sliceUtf8(result, maxBytes);
+	return sliceUtf8(result, maxBytes - markerBytes) + marker;
+}
+
+export { deduplicateLines, groupErrorLines, smartTruncate, stripAnsi, stripProgressLines };
+
+/**
+ * Grace period after a child exits for its stdio pipes to flush before the
+ * result is settled anyway. Long enough for ordinary buffered output, short
+ * enough that a leaked descendant holding the pipe cannot stall a tool call.
+ */
+const STREAM_DRAIN_MS = 250;
+
+export class SubprocessExecutor {
+	private runtimes: RuntimeMap;
+	private config: Config;
+	private env: Record<string, string>;
+	private activeProcesses = new Set<import("node:child_process").ChildProcess>();
+
+	constructor(runtimes: RuntimeMap, config: Config) {
+		this.runtimes = runtimes;
+		this.config = config;
+		this.env = buildEnv(config);
+	}
+
+	/** Kill all active child processes and their process trees. */
+	shutdown(): void {
+		for (const proc of this.activeProcesses) {
+			try {
+				if (proc.pid) killProcessTree(proc.pid);
+			} catch {
+				/* ignore */
+			}
+		}
+		this.activeProcesses.clear();
+	}
+
+	/**
+	 * Execute code in a subprocess.
+	 */
+	async execute(opts: ExecOptions): Promise<ExecResult> {
+		const entry = this.runtimes.get(opts.language);
+		if (!entry) {
+			return {
+				indexableStdout: "",
+				stdout: "",
+				stderr: `Language "${opts.language}" is not available. No runtime detected.`,
+				exitCode: 1,
+				truncated: false,
+				killed: false,
+			};
+		}
+
+		const { plugin } = entry;
+		let runtime = entry.runtime;
+
+		// A caller may need a specific runtime for correctness, not speed (the
+		// fetch tool's IP pinning is a no-op under Bun). Fail closed rather than
+		// silently running on a runtime that drops the guarantee.
+		if (opts.requireRuntime && runtime !== opts.requireRuntime) {
+			const forced = findRuntimeBinary(opts.requireRuntime);
+			if (!forced) {
+				return {
+					indexableStdout: "",
+					stdout: "",
+					stderr: `This operation requires the "${opts.requireRuntime}" runtime, which was not found on PATH.`,
+					exitCode: 1,
+					truncated: false,
+					killed: false,
+				};
+			}
+			runtime = forced;
+		}
+
+		const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+		const maxOutput = opts.maxOutputBytes ?? this.config.maxOutputBytes;
+		const tmpDir = this.createTempDir();
+
+		let code = opts.code;
+
+		// Apply preprocessing (e.g. Go package wrapper, PHP tag, Rust main)
+		const preprocessed = plugin.preprocessCode?.(code);
+		if (preprocessed !== undefined) {
+			code = preprocessed;
+		}
+
+		// Add network tracking for JS/TS
+		if (opts.language === "javascript" || opts.language === "typescript") {
+			code = wrapWithNetworkTracking(code);
+		}
+
+		const srcPath = join(tmpDir, `main${plugin.fileExtension}`);
+		writeFileSync(srcPath, code);
+
+		try {
+			// Handle compiled languages (Rust)
+			if (plugin.compileStep) {
+				const binPath = join(tmpDir, process.platform === "win32" ? "main.exe" : "main");
+				const compileCmd = plugin.compileStep(runtime, srcPath, binPath);
+				try {
+					// Security fix: execFileSync with array args, no shell injection
+					execFileSync(compileCmd[0], compileCmd.slice(1), {
+						timeout: timeout,
+						cwd: tmpDir,
+						env: this.env,
+					});
+				} catch (e: unknown) {
+					const err = e as { stderr?: Buffer; message?: string };
+					return {
+						indexableStdout: "",
+						stdout: "",
+						stderr: err.stderr?.toString() ?? err.message ?? "Compilation failed",
+						exitCode: 1,
+						truncated: false,
+						killed: false,
+					};
+				}
+				return await this.spawnAndCapture(binPath, [], tmpDir, timeout, maxOutput);
+			}
+
+			const cmd = plugin.buildCommand(runtime, srcPath);
+			return await this.spawnAndCapture(
+				cmd[0],
+				cmd.slice(1),
+				tmpDir,
+				timeout,
+				maxOutput,
+				plugin.needsShell,
+				opts.language === "shell" ? opts.code : undefined,
+			);
+		} finally {
+			// Remove user code from disk immediately to minimize the window in
+			// which it is readable. cleanupTempDir falls back to a deferred retry
+			// if a runtime (e.g. Bun) still holds a handle.
+			this.cleanupTempDir(tmpDir);
+		}
+	}
+
+	/**
+	 * Execute code with FILE_CONTENT injected.
+	 */
+	async executeFile(opts: ExecFileOptions): Promise<ExecResult> {
+		const entry = this.runtimes.get(opts.language);
+		if (!entry) {
+			return {
+				indexableStdout: "",
+				stdout: "",
+				stderr: `Language "${opts.language}" is not available.`,
+				exitCode: 1,
+				truncated: false,
+				killed: false,
+			};
+		}
+
+		const { plugin } = entry;
+		let code = opts.code;
+
+		if (plugin.wrapWithFileContent) {
+			code = plugin.wrapWithFileContent(code, opts.filePath);
+		}
+
+		return this.execute({ ...opts, code });
+	}
+
+	private spawnAndCapture(
+		cmd: string,
+		args: string[],
+		cwd: string,
+		timeout: number,
+		maxOutput: number,
+		useShell?: boolean,
+		shellCode?: string,
+	): Promise<ExecResult> {
+		return new Promise((resolve) => {
+			const hardCap = this.config.hardCapBytes;
+			const stdoutChunks: Buffer[] = [];
+			const stderrChunks: Buffer[] = [];
+			let totalBytes = 0;
+			let capped = false;
+			let timedOut = false;
+			let networkBytes: number | undefined;
+			let resolved = false;
+
+			const proc = spawn(cmd, args, {
+				cwd,
+				env: { ...this.env, TMPDIR: cwd },
+				stdio: ["ignore", "pipe", "pipe"],
+				// No `timeout` option here — it SIGTERMs only the direct child,
+				// leaking grandchildren in the detached process group. Our own
+				// timer below kills the whole tree instead.
+				shell: useShell,
+				detached: process.platform !== "win32",
+			});
+
+			this.activeProcesses.add(proc);
+
+			const timer = setTimeout(() => {
+				timedOut = true;
+				if (proc.pid) killProcessTree(proc.pid);
+			}, timeout);
+			// Don't let the timer keep the process alive on its own.
+			timer.unref?.();
+
+			proc.stdout?.on("data", (chunk: Buffer) => {
+				totalBytes += chunk.length;
+				if (totalBytes > hardCap) {
+					capped = true;
+					if (proc.pid) killProcessTree(proc.pid);
+					return;
+				}
+				stdoutChunks.push(chunk);
+			});
+
+			proc.stderr?.on("data", (chunk: Buffer) => {
+				totalBytes += chunk.length;
+				if (totalBytes > hardCap) {
+					capped = true;
+					if (proc.pid) killProcessTree(proc.pid);
+					return;
+				}
+				stderrChunks.push(chunk);
+			});
+
+			proc.on("error", (err) => {
+				clearTimeout(timer);
+				debug("Process error:", err.message);
+				this.activeProcesses.delete(proc);
+				if (!resolved) {
+					resolved = true;
+					resolve({
+						indexableStdout: "",
+						stdout: "",
+						stderr: err.message,
+						exitCode: 1,
+						truncated: false,
+						killed: false,
+					});
+				}
+			});
+
+			// `close` fires only after the child exits AND every holder of its stdio
+			// pipes closes them, so one escaped grandchild (a build daemon, a test
+			// worker) kept the promise pending forever: the temp dir stayed on disk,
+			// the concurrency slot was never released, and the MCP request never got
+			// a response. Settle on `exit` after a bounded drain instead.
+			const settle = (code: number | null): void => {
+				clearTimeout(timer);
+				clearTimeout(drainTimer);
+				this.activeProcesses.delete(proc);
+				if (resolved) return;
+				resolved = true;
+				let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+				let stderr = Buffer.concat(stderrChunks).toString("utf-8");
+				const killed = capped || timedOut;
+
+				// Extract network bytes from JS/TS stderr marker
+				const netMatch = stderr.match(/__CM_NET__:(\d+)/);
+				if (netMatch) {
+					networkBytes = Number.parseInt(netMatch[1], 10);
+					stderr = stderr.replace(/__CM_NET__:\d+\n?/, "");
+				}
+
+				// Normalize ANSI exactly once and share the result. Escapes are
+				// presentation metadata, so the searchable copy wants them gone, and
+				// command filters need them gone to detect markers (PASS/FAIL, ✓/✗)
+				// that real output wraps in color. This used to be two full scans of
+				// the same capped buffer — up to the hard cap twice per execution.
+				const indexableStdout = stripAnsi(stdout);
+
+				// The searchable corpus stays marker-free; the response carries the
+				// cap notice. Neither marker contains ANSI, so appending after the
+				// strip is equivalent to the previous strip-after-append order.
+				stdout = capped
+					? `${indexableStdout}\n[output capped at ${formatBytes(hardCap)} — process killed]`
+					: indexableStdout;
+				// stderr went into the response raw: no ANSI strip, no dedup, and it
+				// was never counted against maxOutputBytes. A failing build's 60k
+				// coloured warnings arrived verbatim on the tool whose premise is
+				// that raw data stays out of context. Normalize it the same way.
+				stderr = stripAnsi(stderr);
+				if (stderr.length > 10_000) {
+					stderr = groupErrorLines(deduplicateLines(stripProgressLines(stderr)));
+				}
+				if (timedOut) {
+					stderr += `\n[killed: timed out after ${formatDuration(timeout)}]`;
+				}
+
+				// Apply command-specific filter for shell commands (before generic pipeline)
+				let commandFiltered = false;
+				if (shellCode && stdout) {
+					const filtered = applyCommandFilter(shellCode, stdout);
+					if (filtered.filtered) {
+						stdout = filtered.output;
+						commandFiltered = true;
+					}
+				}
+
+				// Format-aware fallback: compress by output shape (JSON/NDJSON/logs)
+				// when no command-specific filter matched. Balanced mode: lossless JSON
+				// minify, log template folding — errors preserved.
+				if (!commandFiltered && stdout) {
+					const fmt = applyFormatFilter(stdout, "balanced");
+					if (fmt.filtered) stdout = fmt.output;
+				}
+
+				// Post-process: strip progress, dedup repeated lines + group similar errors (skip for small outputs)
+				if (stdout.length > 10_000) {
+					stdout = stripProgressLines(stdout);
+					stdout = deduplicateLines(stdout);
+					stdout = groupErrorLines(stdout);
+				}
+
+				const truncated = Buffer.byteLength(stdout) > maxOutput;
+				if (truncated) {
+					stdout = smartTruncate(stdout, maxOutput);
+				}
+
+				resolve({
+					indexableStdout,
+					stdout,
+					stderr,
+					// Signal kills report code=null — map to 1 so a killed
+					// process is never mistaken for a successful one.
+					exitCode: code ?? (killed ? 1 : null),
+					truncated,
+					killed,
+					networkBytes,
+				});
+			};
+
+			// `exit` means the process is gone; give its pipes a short grace period to
+			// flush, then settle regardless of who still holds them.
+			let drainTimer: NodeJS.Timeout = setTimeout(() => {}, 0);
+			clearTimeout(drainTimer);
+			proc.on("close", (code) => settle(code));
+			proc.on("exit", (code) => {
+				drainTimer = setTimeout(() => settle(code), STREAM_DRAIN_MS);
+				drainTimer.unref?.();
+			});
+		});
+	}
+
+	private createTempDir(): string {
+		return mkdtempSync(join(tmpdir(), "context-compress-exec-"));
+	}
+
+	private cleanupTempDir(dir: string): void {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			// A runtime may still hold a handle to the dir (seen with Bun and on
+			// Windows). Retry once after a short delay before giving up.
+			setTimeout(() => {
+				try {
+					rmSync(dir, { recursive: true, force: true });
+				} catch (e) {
+					debug("Failed to cleanup temp dir:", dir, e);
+				}
+			}, 100).unref();
+		}
+	}
+}
+
+/**
+ * Wrap JS/TS code with fetch interceptor for network tracking.
+ */
+function wrapWithNetworkTracking(code: string): string {
+	const preamble =
+		"let __cm_net=0;const __cm_f=globalThis.fetch;if(__cm_f){globalThis.fetch=async(...a)=>{const r=await __cm_f(...a);try{const cl=r.headers.get('content-length');if(cl){__cm_net+=parseInt(cl,10)}}catch{}return r};}";
+	const epilogue = `\nprocess.stderr.write('__CM_NET__:'+__cm_net+'\\n');`;
+
+	// Wrap in async IIFE
+	return `${preamble}\nasync function __cm_main(){${code}}\n__cm_main().then(()=>{${epilogue}}).catch(e=>{console.error(e);${epilogue}process.exit(1)});`;
+}

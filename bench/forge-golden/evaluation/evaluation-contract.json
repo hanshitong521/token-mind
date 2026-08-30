@@ -1,0 +1,7 @@
+{
+  "schema_version": "active-contract-pointer-v1",
+  "active_contract": "evaluation-contract-v2.json",
+  "archived": {
+    "evaluation-contract-v1": "evaluation-contract-v1.archived.json"
+  }
+}

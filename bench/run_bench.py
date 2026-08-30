@@ -134,6 +134,28 @@ def gen_fixtures():
         big.append(f"2026-08-29T18:{i // 60 % 60:02d}:{i % 60:02d}.{i % 1000:03d} [{lvl}] app-server-{i % 4} {msg}")
     (FX / "big_log.log").write_text("\n".join(big) + "\n")
 
+    jest = ["> repo@1.0.0 test", "> jest", "",
+            " FAIL  src/orders/discount.test.ts",
+            "  ● discount rules › applies vip discount",
+            "    expect(received).toBe(expected) // Object.is equality",
+            "    Expected: 30",
+            "    Received: 20",
+            "      12 |   it(\"applies vip discount\", () => {",
+            "    > 13 |     expect(calc_discount({vip: true, amount: 200})).toBe(30);",
+            "         |                                                     ^",
+            "      at Object.<anonymous> (src/orders/discount.test.ts:13:53)", "",
+            " FAIL  src/orders/cart.test.ts",
+            "  ● cart › recalculates totals",
+            "    TypeError: Cannot read properties of undefined (reading 'total')", ""]
+    jest += [f" PASS  src/orders/module_{i}.test.ts" for i in range(120)]
+    jest += ["",
+             "Test Suites: 2 failed, 6 passed, 8 of 9 total",
+             "Tests:       2 failed, 125 passed, 127 total",
+             "Snapshots:   0 total",
+             "Time:        5.102 s",
+             "Ran all test suites matching /src/."]
+    (FX / "jest_fail.log").write_text("\n".join(jest) + "\n")
+
 
 # ---------- cases ----------
 
@@ -157,6 +179,9 @@ def cases():
           "OrderController.checkout(OrderController.java:87)"]),
         ("big_log", ["cat", f"{F}/big_log.log"], [str(RTK), "log", f"{F}/big_log.log"], "cmd", BENCH,
          ["Failed to flush batch to storage: timeout after 30000ms", "req-002747"]),
+        ("jest_fail_log", ["cat", f"{F}/jest_fail.log"], [str(RTK), "log", f"{F}/jest_fail.log"], "cmd", BENCH,
+         ["2 failed, 125 passed, 127 total", "FAIL src/orders/discount.test.ts", "expect(received).toBe(expected)",
+          "TypeError: Cannot read properties of undefined"]),
         ("source_read", ["cat", f"{R}/src/mod4/file_10.py"], [str(RTK), "read", f"{R}/src/mod4/file_10.py"], "cmd", BENCH,
          ["func_10_7"]),
     ]

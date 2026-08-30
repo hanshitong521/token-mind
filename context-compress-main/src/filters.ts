@@ -1,0 +1,987 @@
+/**
+ * Command-specific output filters.
+ *
+ * Three modes balance fidelity vs aggressiveness:
+ *   - "conservative": no command-specific compression (callers strip ANSI only)
+ *   - "balanced":     remove obvious noise (progress, hints, deprecations);
+ *                     preserve metadata (commit bodies, file dates, etc.)
+ *   - "aggressive":   match RTK's tactic of dropping metadata too — git log
+ *                     becomes one-line per commit, ls -la drops perms/dates,
+ *                     find lower threshold, grep groups by file.
+ *
+ * The mode is plumbed through the pipeline via compressOutput in cli/filter.ts.
+ * Default is "balanced".
+ */
+
+export type FilterMode = "conservative" | "balanced" | "aggressive";
+
+/** Mode the user can request — includes the "auto" meta-mode that resolves to one of FilterMode. */
+export type RequestedMode = FilterMode | "auto";
+
+export const DEFAULT_MODE: FilterMode = "balanced";
+
+/** Every mode a caller may request, for validation and error messages. */
+export const REQUESTED_MODES: readonly RequestedMode[] = [
+	"conservative",
+	"balanced",
+	"aggressive",
+	"auto",
+];
+
+export function isRequestedMode(input: string | undefined): input is RequestedMode {
+	return input !== undefined && (REQUESTED_MODES as readonly string[]).includes(input);
+}
+
+export function parseMode(input: string | undefined): FilterMode {
+	if (input === "aggressive" || input === "conservative") return input;
+	return "balanced";
+}
+
+/** Parse mode allowing "auto" as a value. */
+export function parseRequestedMode(input: string | undefined): RequestedMode {
+	if (input === "auto") return "auto";
+	return parseMode(input);
+}
+
+export interface FilterResult {
+	output: string;
+	filtered: boolean;
+}
+
+import { runToolAdapter } from "./adapters.js";
+
+/**
+ * Never hand back an empty response for non-empty input.
+ *
+ * The aggressive filters keep only lines matching a summary shape, so a run whose
+ * output does not match any of them collapsed to "". The caller then cannot tell
+ * success from failure — `npm install` printing "up to date in 431ms" and one
+ * printing an error both rendered as nothing. `git log` already had this net.
+ */
+function withFloor(result: FilterResult, original: string): FilterResult {
+	if (result.output.trim() === "" && original.trim() !== "") {
+		return { output: original, filtered: false };
+	}
+	// Preserve the inner flag. Forcing `filtered: true` made filters that
+	// deliberately declined (filterPs on an unknown header, filterDu under 25
+	// lines) report success, which set commandFiltered and skipped
+	// applyFormatFilter entirely — a 3759-byte JSON payload stayed 3759 bytes
+	// where the format fallback would have made it 228.
+	return result;
+}
+
+/** Detect command type from code string and apply specialized filter */
+export function applyCommandFilter(
+	code: string,
+	stdout: string,
+	mode: FilterMode = DEFAULT_MODE,
+): FilterResult {
+	if (mode === "conservative") return { output: stdout, filtered: false };
+
+	const cmd = code.trim().split(/\s+/)[0];
+	const fullCmd = code.trim();
+
+	// Structured tool adapters: for tools with a fixed output contract the
+	// parsed report beats heuristic filtering — deterministic, and the counts /
+	// failure evidence the agent needs are guaranteed present. Unmatched tools
+	// return null and fall through to the filters below.
+	const adapted = runToolAdapter(fullCmd, stdout);
+	if (adapted) return adapted;
+
+	// Git commands
+	if (cmd === "git") return filterGit(fullCmd, stdout, mode);
+
+	// Package managers (its own test/install/ls branches route from there)
+	if (cmd === "npm" || cmd === "yarn" || cmd === "pnpm" || cmd === "bun")
+		return filterPackageManager(fullCmd, stdout, mode);
+
+	// Test runners — match on the command token, never substrings of the whole
+	// command line ("cat latest.log" and "ls test-results/" must NOT route here;
+	// filterTestOutput can drop everything before the first failure marker).
+	if (
+		/^(pytest|py\.test|jest|vitest|mocha|ava|bats|ctest|phpunit|rspec|gotestsum)$/.test(cmd) ||
+		(cmd === "go" && /^go\s+test\b/.test(fullCmd)) ||
+		((cmd === "npx" || cmd === "bunx" || cmd === "pnpx") &&
+			/^\S+\s+(jest|vitest|mocha|ava|pytest)\b/.test(fullCmd)) ||
+		/\bnode\s+.*--test\b/.test(fullCmd)
+	) {
+		return filterTestOutput(stdout);
+	}
+
+	// Build tools
+	if (cmd === "cargo" || cmd === "make" || cmd === "gradle")
+		return filterBuildOutput(fullCmd, stdout);
+
+	// Docker/container
+	if (cmd === "docker" || cmd === "kubectl") return filterContainerOutput(fullCmd, stdout);
+
+	// ls/find/tree
+	if (cmd === "ls" || cmd === "find" || cmd === "tree")
+		return filterFileList(fullCmd, stdout, mode);
+
+	// grep — aggressive mode only (group by file, drop long lines)
+	if (cmd === "grep" || cmd === "rg" || cmd === "ripgrep") {
+		if (mode === "aggressive") {
+			// Recursive greps prefix each match with the file path even without -n;
+			// rg is recursive (and path-prefixed) by default.
+			const recursive = cmd !== "grep" || /(^|\s)-[a-zA-Z]*(r|R)/.test(fullCmd);
+			return withFloor(filterGrep(stdout, recursive), stdout);
+		}
+	}
+
+	// System tabular commands: df, du, ps — aggressive mode only.
+	if (mode === "aggressive") {
+		if (cmd === "df") return withFloor(filterDf(stdout), stdout);
+		if (cmd === "du") return withFloor(filterDu(stdout), stdout);
+		if (cmd === "ps") return withFloor(filterPs(stdout), stdout);
+	}
+
+	return { output: stdout, filtered: false };
+}
+
+export function filterGit(
+	cmd: string,
+	stdout: string,
+	mode: FilterMode = DEFAULT_MODE,
+): FilterResult {
+	// git push/pull/fetch/clone: strip progress lines
+	if (/git\s+(push|pull|fetch|clone)/.test(cmd)) {
+		const lines = stdout.split("\n");
+		const filtered = lines.filter(
+			(l) =>
+				!l.startsWith("remote: Counting") &&
+				!l.startsWith("remote: Compressing") &&
+				!l.startsWith("remote: Total") &&
+				!l.includes("Unpacking objects:") &&
+				!l.includes("Receiving objects:") &&
+				!l.includes("Resolving deltas:") &&
+				!/^\s*\d+%/.test(l),
+		);
+		return { output: filtered.join("\n"), filtered: true };
+	}
+
+	// git status: remove hint lines, keep branch and file status
+	if (/git\s+status/.test(cmd)) {
+		return { output: filterGitStatus(stdout, mode), filtered: true };
+	}
+
+	// git log — aggressive mode collapses each commit to one line.
+	// Balanced mode preserves the header + first 3 body lines and replaces
+	// the remainder with "[+N more lines]". Keeps the "why" intact while
+	// dropping verbose tail content.
+	if (/git\s+log/.test(cmd) && !cmd.includes("--oneline")) {
+		// Custom formats, graphs, and patch/name output don't follow the
+		// "commit / Author: / Date: / subject" grammar — parsing them as if
+		// they did yields empty or mangled output. Pass them through.
+		if (/--(format|pretty|graph|patch|stat|name-only|name-status|numstat)\b|\s-p(\s|$)/.test(cmd)) {
+			return { output: stdout, filtered: false };
+		}
+		if (mode === "aggressive") {
+			const collapsed = aggressiveGitLog(stdout);
+			// Safety net: never return empty output for non-empty input.
+			if (collapsed.trim() === "" && stdout.trim() !== "") {
+				return { output: stdout, filtered: false };
+			}
+			return { output: collapsed, filtered: true };
+		}
+		if (mode === "balanced") {
+			const truncated = balancedGitLog(stdout);
+			// Only mark filtered if we actually dropped something
+			if (truncated.length < stdout.length) {
+				return { output: truncated, filtered: true };
+			}
+		}
+	}
+
+	// git diff — aggressive mode drops context lines for unified diffs.
+	// Already-compact forms (--stat, --name-only, --name-status, --shortstat)
+	// pass through since they ARE the summary.
+	if (/git\s+diff/.test(cmd) && mode === "aggressive") {
+		if (/--(stat|name-only|name-status|shortstat|numstat)\b/.test(cmd)) {
+			return { output: stdout, filtered: false };
+		}
+		return { output: aggressiveGitDiff(stdout), filtered: true };
+	}
+
+	return { output: stdout, filtered: false };
+}
+
+function filterGitStatus(stdout: string, mode: FilterMode): string {
+	const lines = stdout.split("\n");
+	const balanced = lines.filter((l) => !l.startsWith("  (use ") && l.trim() !== "");
+	if (mode !== "aggressive") return balanced.join("\n");
+
+	// Aggressive: collapse "Changes not staged"/"Untracked" sections to terse counts.
+	// Keep: branch line, file paths with status prefix.
+	const out: string[] = [];
+	for (const l of balanced) {
+		if (/^On branch/.test(l)) {
+			out.push(l.replace(/^On branch /, "* "));
+			continue;
+		}
+		if (/^Your branch is/.test(l)) continue;
+		if (/^Changes (to be committed|not staged for commit):/.test(l)) continue;
+		if (/^Untracked files:/.test(l)) {
+			out.push("? Untracked:");
+			continue;
+		}
+		if (/^no changes added to commit/.test(l)) continue;
+		if (/^nothing to commit/.test(l)) {
+			out.push("(clean)");
+			continue;
+		}
+		// File status lines: "\tmodified:   foo.ts" → "M foo.ts"
+		const m = l.match(/^\s*(modified|new file|deleted|renamed|typechange):\s*(.+)$/);
+		if (m) {
+			const code =
+				(
+					{ modified: "M", "new file": "A", deleted: "D", renamed: "R", typechange: "T" } as Record<
+						string,
+						string
+					>
+				)[m[1]] ?? "?";
+			out.push(`${code} ${m[2]}`);
+			continue;
+		}
+		out.push(l);
+	}
+	return out.join("\n");
+}
+
+/**
+ * Convert verbose `git log` output to one line per commit:
+ *   "<sha7> <subject> (<reltime>) <author>"
+ * Body and "Date:" lines are dropped. Merge commits keep their subject.
+ */
+function aggressiveGitLog(stdout: string): string {
+	const lines = stdout.split("\n");
+	const out: string[] = [];
+	let sha = "";
+	let author = "";
+	let date = "";
+	let subject = "";
+	let inCommit = false;
+	let blanksAfterDate = 0;
+
+	const flush = () => {
+		if (!sha) return;
+		const reltime = date ? ` (${humanReltime(date)})` : "";
+		const auth = author ? ` <${author.replace(/\s*<.*?>/, "").trim()}>` : "";
+		out.push(`${sha.slice(0, 7)} ${subject}${reltime}${auth}`);
+	};
+
+	for (const line of lines) {
+		const m = line.match(/^commit\s+([0-9a-f]{7,40})/);
+		if (m) {
+			flush();
+			sha = m[1];
+			author = "";
+			date = "";
+			subject = "";
+			inCommit = true;
+			blanksAfterDate = 0;
+			continue;
+		}
+		if (!inCommit) continue;
+		if (/^Author:\s/.test(line)) {
+			author = line.replace(/^Author:\s+/, "").trim();
+			continue;
+		}
+		if (/^Date:\s/.test(line)) {
+			date = line.replace(/^Date:\s+/, "").trim();
+			continue;
+		}
+		if (line.trim() === "") {
+			blanksAfterDate++;
+			continue;
+		}
+		// First non-blank line after Date: is the subject. Skip body afterward.
+		if (!subject && blanksAfterDate >= 1) {
+			subject = line.trim();
+		}
+	}
+	flush();
+	return out.join("\n");
+}
+
+/**
+ * Truncate `git log` commit bodies to the first 3 lines, replacing the
+ * tail with "[+N lines omitted]". Keeps full headers (sha, author, date,
+ * subject) and the first 3 body paragraphs verbatim — so the agent still
+ * gets the "why" of each commit but doesn't pay for verbose tails.
+ *
+ * Returns the original input unchanged if no truncation was needed.
+ */
+const BALANCED_GIT_LOG_BODY_LINES = 3;
+
+function balancedGitLog(stdout: string): string {
+	const lines = stdout.split("\n");
+	const out: string[] = [];
+	let bodyKept = 0;
+	let bodyDropped = 0;
+	let subjectSeen = false;
+	let inCommit = false;
+	let inBody = false;
+	let blanksAfterDate = 0;
+
+	const flushOmitted = () => {
+		if (bodyDropped > 0) {
+			out.push(`    [+${bodyDropped} lines omitted]`);
+			bodyDropped = 0;
+		}
+	};
+
+	for (const line of lines) {
+		// New commit boundary — flush any pending omission marker, reset state.
+		if (/^commit\s+[0-9a-f]{7,40}/.test(line)) {
+			flushOmitted();
+			out.push(line);
+			inCommit = true;
+			inBody = false;
+			subjectSeen = false;
+			bodyKept = 0;
+			blanksAfterDate = 0;
+			continue;
+		}
+		if (!inCommit) {
+			out.push(line);
+			continue;
+		}
+		// Headers (Author/Date/Merge) always kept.
+		if (/^(Author|Date|Merge):\s/.test(line)) {
+			out.push(line);
+			continue;
+		}
+		// Blank line — kept; counts as "body separator" transition.
+		if (line.trim() === "") {
+			out.push(line);
+			blanksAfterDate++;
+			continue;
+		}
+		// Once past the first blank after Date, we're in the body.
+		if (blanksAfterDate >= 1) inBody = true;
+
+		if (inBody) {
+			// Always keep the subject (first non-blank line in body).
+			if (!subjectSeen) {
+				subjectSeen = true;
+				out.push(line);
+				continue;
+			}
+			// Keep up to N body lines past the subject; drop the rest with a marker.
+			if (bodyKept >= BALANCED_GIT_LOG_BODY_LINES) {
+				bodyDropped++;
+				continue;
+			}
+			bodyKept++;
+		}
+		out.push(line);
+	}
+	flushOmitted();
+	return out.join("\n");
+}
+
+/**
+ * Convert verbose unified diff to "+ added\n- removed" only — drop hunks/context.
+ */
+function aggressiveGitDiff(stdout: string): string {
+	const lines = stdout.split("\n");
+	const out: string[] = [];
+	let currentFile = "";
+	for (const line of lines) {
+		const fm = line.match(/^diff --git a\/(.+?) b\//);
+		if (fm) {
+			currentFile = fm[1];
+			out.push(`@@ ${currentFile}`);
+			continue;
+		}
+		if (/^---\s|^\+\+\+\s|^index\s|^@@\s/.test(line)) continue;
+		// Keep only +/- content lines (not "+++" / "---" headers, already filtered above)
+		if (line.startsWith("+") || line.startsWith("-")) out.push(line);
+	}
+	return out.join("\n");
+}
+
+function humanReltime(dateStr: string): string {
+	const d = new Date(dateStr);
+	if (Number.isNaN(d.getTime())) return dateStr;
+	const ms = Date.now() - d.getTime();
+	const hours = Math.round(ms / 3600_000);
+	if (hours < 1) return "just now";
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.round(hours / 24);
+	if (days < 30) return `${days}d ago`;
+	const months = Math.round(days / 30);
+	if (months < 12) return `${months}mo ago`;
+	return `${Math.round(months / 12)}y ago`;
+}
+
+export function filterPackageManager(
+	cmd: string,
+	stdout: string,
+	mode: FilterMode = DEFAULT_MODE,
+): FilterResult {
+	// npm/yarn install: strip noise, keep summary
+	if (/\b(install|add|i)\b/.test(cmd)) {
+		const lines = stdout.split("\n");
+		const filtered = lines.filter(
+			(l) =>
+				!l.startsWith("npm warn") &&
+				!l.includes("packages are looking for funding") &&
+				!l.includes("run `npm fund`") &&
+				!l.startsWith("npm notice") &&
+				!/^[\s│├└─]+$/.test(l) && // tree-drawing characters
+				!/^\s*$/.test(l),
+		);
+		// Aggressive: keep only the final "added N packages" / vulnerability summary lines
+		if (mode === "aggressive") {
+			const summaryOnly = filtered.filter(
+				(l) =>
+					/^(added|removed|changed|audited)\s+\d+/.test(l) ||
+					/vulnerabilit(y|ies)/i.test(l) ||
+					/^(npm|yarn|pnpm)\s+(ERR|error)/i.test(l) ||
+					/^\s*(error|ERR!)\b/i.test(l),
+			);
+			return withFloor({ output: summaryOnly.join("\n"), filtered: true }, stdout);
+		}
+		return { output: filtered.join("\n"), filtered: true };
+	}
+
+	// npm test / npm t: delegate to the test filter. `t` is npm's documented alias
+	// and previously fell through to the tabular/ls branches instead.
+	if (/\btest\b/.test(cmd) || /^\S+\s+t$/.test(cmd.trim())) {
+		return filterTestOutput(stdout);
+	}
+
+	// npm ls / list / ll — aggressive mode strips tree-drawing chars and
+	// collapses identical version lines.
+	if (mode === "aggressive" && /\b(ls|list|ll)\b/.test(cmd)) {
+		return withFloor(filterNpmLs(stdout), stdout);
+	}
+
+	return { output: stdout, filtered: false };
+}
+
+/** npm ls output — strip tree-drawing characters, drop "deduped" markers, dedupe identical lines. */
+function filterNpmLs(stdout: string): FilterResult {
+	const lines = stdout.split("\n");
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const l of lines) {
+		// Strip box-drawing prefix: ├── ┬ │ └── ─ etc.
+		const stripped = l.replace(/^[\s│├└─┬]+/u, "").trimEnd();
+		if (!stripped) continue;
+		// Drop "deduped" markers — they're noise once you know there's deduplication.
+		if (/\bdeduped\b/.test(stripped)) continue;
+		// Drop "extraneous" labels (can appear leading or inline).
+		const cleaned = stripped.replace(/^extraneous\s+/, "").replace(/\s+\bextraneous\b/g, "");
+		if (seen.has(cleaned)) continue;
+		seen.add(cleaned);
+		out.push(cleaned);
+	}
+	return { output: out.join("\n"), filtered: true };
+}
+
+const FAIL_MARKER_RE = /^\s*[✗✘×]\s/;
+const FAIL_WORD_RE = /\bFAIL\b/;
+const FAILED_RE = /\bfailed?\b/i;
+const ERROR_RE = /\bERROR\b/;
+const SUMMARY_RE =
+	/^\s*(Tests?|Suites?|Test Suites)\s*:|^\s*(pass|fail|skip|pending|todo)\s|\b\d+\s+(passing|failing|pending|skipped)\b|^(ok|not ok)\s|^ℹ\s|^(PASS|FAIL)\s/i;
+
+function isFailMarker(line: string): boolean {
+	return (
+		FAIL_MARKER_RE.test(line) ||
+		FAIL_WORD_RE.test(line) ||
+		FAILED_RE.test(line) ||
+		ERROR_RE.test(line)
+	);
+}
+
+function isSummaryLine(line: string): boolean {
+	return SUMMARY_RE.test(line);
+}
+
+/**
+ * Say how many lines were dropped.
+ *
+ * This filter is the most lossy in the codebase and it runs in the *default*
+ * mode, while `execute` tells the model it is receiving stdout. Without a
+ * marker, a `console.log` the caller added specifically to inspect something
+ * vanishes and the caller concludes the statement never ran. Every other lossy
+ * path here already emits one (`balancedGitLog`, `smartTruncate`, `compressLogs`).
+ */
+function withOmissionNote(kept: string[], sourceLines: string[]): string {
+	// Count lines genuinely absent from the kept set. Comparing raw counts made a
+	// trailing newline — present in essentially all output — look like a dropped
+	// line, so `Tests: 184 passed\n` reported "+1 lines omitted".
+	const keptSet = new Set(kept.map((line) => line.trim()).filter(Boolean));
+	const omitted = sourceLines.filter(
+		(line) => line.trim() !== "" && !keptSet.has(line.trim()),
+	).length;
+	if (omitted <= 0) return kept.join("\n");
+	return `${kept.join("\n")}\n[+${omitted} lines omitted — use execute(intent:…) or search() for the full output]`;
+}
+
+export function filterTestOutput(stdout: string): FilterResult {
+	const lines = stdout.split("\n");
+	const failures: string[] = [];
+	const summary: string[] = [];
+	let inFailure = false;
+	let failCount = 0;
+
+	for (const line of lines) {
+		if (isFailMarker(line)) {
+			inFailure = true;
+			failCount++;
+		}
+
+		if (inFailure) {
+			failures.push(line);
+			if (line.trim() === "" && failures.length > 3) inFailure = false;
+		}
+
+		if (isSummaryLine(line)) {
+			summary.push(line);
+		}
+	}
+
+	// If all pass, return compact summary
+	if (failCount === 0 && summary.length > 0) {
+		return { output: withOmissionNote(summary, lines), filtered: true };
+	}
+
+	// If failures exist, return failures + the rollup summary lines only.
+	// Drop per-file PASS lines from the summary (the FAIL lines + counts are
+	// what the agent needs; 200 PASS lines just inflate context).
+	if (failures.length > 0) {
+		// Jest writes ` PASS  path/to.test.ts` with a leading space, and SUMMARY_RE
+		// admits it via `^\s*`, so anchoring the drop at column 0 kept every one of
+		// them. Measured on 1,000 passing files plus one failure: 46,105 -> 414 bytes
+		// when the badge starts at column 0, and 48,105 -> 48,222 — larger than the
+		// input — in Jest's actual format. The flagship case of the flagship filter
+		// did nothing on the most common JS test runner.
+		//
+		// Also drop lines already emitted as failures: a FAIL badge is both a failure
+		// and a summary line, so it was printed twice.
+		const emitted = new Set(failures);
+		const rollup = summary.filter((l) => !/^\s*PASS\s/i.test(l) && !emitted.has(l));
+		return {
+			output: withOmissionNote([...failures, "", ...rollup], lines),
+			filtered: true,
+		};
+	}
+
+	return { output: stdout, filtered: false };
+}
+
+export function filterBuildOutput(_cmd: string, stdout: string): FilterResult {
+	const lines = stdout.split("\n");
+	// Strip: download progress, "Compiling X/Y" or "Compiling crate v1.2.3" lines,
+	// blocking-on-lock messages, blank lines.
+	// Keep: "Finished" lines, errors, and other meaningful output.
+	const filtered = lines.filter(
+		(l) =>
+			!l.includes("Downloading") &&
+			!l.includes("Downloaded") &&
+			!/Compiling\s+\d+\s+of\s+\d+/.test(l) &&
+			!/^\s*Compiling\s+[\w-]+\s+v\d/.test(l) &&
+			!/^\s*Checking\s+[\w-]+\s+v\d/.test(l) &&
+			!l.includes("Blocking waiting for file lock") &&
+			!/^\s*$/.test(l),
+	);
+	return { output: filtered.join("\n"), filtered: filtered.length < lines.length };
+}
+
+export function filterContainerOutput(cmd: string, stdout: string): FilterResult {
+	// docker build: strip layer progress, keep step lines and summary
+	if (/docker\s+build/.test(cmd)) {
+		const lines = stdout.split("\n");
+		const filtered = lines.filter(
+			(l) => !l.startsWith(" ---> ") && !l.startsWith("Sending build context") && !/^\s*$/.test(l),
+		);
+		return { output: filtered.join("\n"), filtered: true };
+	}
+
+	// kubectl get with many rows: summarize per namespace/status.
+	// (kubectl describe is key-value text, not a table — summarizing it as
+	// columns destroys the entire output, so it passes through untouched.)
+	if (/^kubectl\s+get\b/.test(cmd)) {
+		const lines = stdout.split("\n").filter((l) => l.length > 0);
+		// Keep header and short outputs as-is.
+		if (lines.length <= 30) return { output: stdout, filtered: false };
+
+		const header = lines[0];
+		const rows = lines.slice(1);
+
+		// `get` rows are columnar — first column is usually NAMESPACE or NAME.
+		// Group by first column + last interesting column (STATUS or AGE).
+		const headerCols = header.split(/\s{2,}/);
+		const hasNamespace = headerCols[0]?.toUpperCase() === "NAMESPACE";
+		const statusIdx = headerCols.findIndex((c) => /^STATUS$/i.test(c));
+
+		// Not a recognizable table (e.g. -o json/yaml) — pass through rather than
+		// produce garbage counts.
+		if (headerCols.length < 2) return { output: stdout, filtered: false };
+
+		// No STATUS column (`get svc`, `get events`, `get cm`, `get pv`, …). There
+		// is no health signal to fold on, and counting by namespace alone would
+		// throw away every name, IP, and port — the only content such output has.
+		// Keep the head verbatim and count the tail instead.
+		if (statusIdx < 0) {
+			const KEEP = 20;
+			const head = rows.slice(0, KEEP);
+			return {
+				output: [
+					header,
+					...head,
+					`  … ${rows.length - head.length} more rows (no STATUS column to summarize by)`,
+				].join("\n"),
+				filtered: true,
+			};
+		}
+
+		// Unhealthy rows are kept verbatim — the whole point of `get` at this
+		// scale is finding what's broken; healthy rows fold into counts.
+		const HEALTHY = /^(Running|Succeeded|Completed|Ready|Active|Bound|Available)$/;
+		const keptRows: string[] = [];
+		const counts = new Map<string, number>();
+		for (const row of rows) {
+			const cols = row.split(/\s{2,}/);
+			const ns = hasNamespace ? cols[0] : "(default)";
+			const status = cols[statusIdx] ?? "—";
+			if (!HEALTHY.test(status)) {
+				keptRows.push(row);
+				continue;
+			}
+			const key = `${ns}\t${status}`;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+
+		const summaryLines = [
+			`${header}`,
+			`(${rows.length} rows: ${keptRows.length} non-healthy kept verbatim, rest summarized by namespace/status)`,
+		];
+		for (const [key, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+			const [ns, status] = key.split("\t");
+			summaryLines.push(`  ${ns} — ${status}: ${n}`);
+		}
+		if (keptRows.length > 0) {
+			summaryLines.push("── Non-healthy rows ──", ...keptRows);
+		}
+		return { output: summaryLines.join("\n"), filtered: true };
+	}
+
+	// docker ps and other compact tabular outputs: pass through.
+	return { output: stdout, filtered: false };
+}
+
+export function filterFileList(
+	cmd: string,
+	stdout: string,
+	mode: FilterMode = DEFAULT_MODE,
+): FilterResult {
+	const isLs = /^ls\b/.test(cmd);
+	const isLong = /-l/.test(cmd);
+
+	// Aggressive mode for `ls -l*` — strip permissions/owner/date, keep name + size
+	if (mode === "aggressive" && isLs && isLong) {
+		return { output: aggressiveLsLong(stdout), filtered: true };
+	}
+
+	// Balanced mode for `ls -l*` — drop universal noise (./.., total N, blank
+	// lines) but keep all metadata. Users who run `ls -l` want perms/dates;
+	// they don't want ./.. entries or the "total" summary.
+	if (mode === "balanced" && isLs && isLong) {
+		return { output: balancedLsLong(stdout), filtered: true };
+	}
+
+	// Threshold for find/ls -R summarization. Above this many lines, we
+	// summarize by directory if the entries span enough dirs. Below this,
+	// the output is short enough to keep verbatim.
+	const { summarizeAt, minDirs } =
+		mode === "aggressive" ? { summarizeAt: 10, minDirs: 3 } : { summarizeAt: 20, minDirs: 4 };
+
+	const lines = stdout.split("\n").filter((l) => l.trim() !== "");
+	if (lines.length <= summarizeAt) return { output: stdout, filtered: false };
+
+	// Group by directory for find/ls -R
+	if (cmd.includes("-R") || cmd.startsWith("find")) {
+		const dirs = new Map<string, number>();
+		for (const line of lines) {
+			const parts = line.split("/");
+			const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : ".";
+			dirs.set(dir, (dirs.get(dir) ?? 0) + 1);
+		}
+
+		if (dirs.size > minDirs) {
+			if (mode === "balanced") {
+				// Balanced keeps names: first 20 entries verbatim, the tail folds
+				// into per-directory counts. An agent asking "what's there" still
+				// sees real paths; only the bulk is summarized.
+				const KEEP = 20;
+				const head = lines.slice(0, KEEP);
+				const tailDirs = new Map<string, number>();
+				for (const line of lines.slice(KEEP)) {
+					const parts = line.split("/");
+					const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : ".";
+					tailDirs.set(dir, (tailDirs.get(dir) ?? 0) + 1);
+				}
+				const summary = Array.from(tailDirs.entries())
+					.sort((a, b) => b[1] - a[1])
+					.map(([dir, count]) => `  ${dir}/ (${count} files)`)
+					.join("\n");
+				return {
+					output: `${lines.length} entries (first ${head.length} shown, rest summarized):\n${head.join("\n")}\n…remainder by directory:\n${summary}`,
+					filtered: true,
+				};
+			}
+			const summary = Array.from(dirs.entries())
+				.sort((a, b) => b[1] - a[1])
+				.map(([dir, count]) => `  ${dir}/ (${count} files)`)
+				.join("\n");
+			return {
+				output: `${lines.length} files found:\n${summary}`,
+				filtered: true,
+			};
+		}
+	}
+
+	return { output: stdout, filtered: false };
+}
+
+/**
+ * Balanced ls -l: keep full metadata (perms/owner/date/size) for every
+ * file but drop the universally-useless lines: ./.., "total N", and blank
+ * separators between recursive sections.
+ */
+function balancedLsLong(stdout: string): string {
+	const lines = stdout.split("\n");
+	const out: string[] = [];
+	for (const line of lines) {
+		if (line.trim() === "") continue;
+		if (/^total\s+\d+/.test(line)) continue;
+		// Match the . and .. entries and skip them — they convey nothing.
+		const m = line.match(
+			/^([dlcb-])[rwxst@+-]{9,}\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\.\.?)$/,
+		);
+		if (m) continue;
+		out.push(line);
+	}
+	return out.join("\n");
+}
+
+/**
+ * Strip `ls -l` metadata; emit "name [size]" rows + directory headers.
+ *
+ * For `ls -laR` (recursive), each subdir gets its own header section. The
+ * subdir entries inside the parent's listing are redundant (they reappear
+ * as section headers below), so we drop them. We also drop "." and ".."
+ * entries, "total N" lines, and blank lines.
+ */
+function aggressiveLsLong(stdout: string): string {
+	const lines = stdout.split("\n");
+	const out: string[] = [];
+	let inSection = false;
+	for (const line of lines) {
+		// Directory header from `ls -laR`: "src/dir:" — emit as `dir/`.
+		if (/^[^\s]+:$/.test(line.trim())) {
+			out.push(line.trim());
+			inSection = true;
+			continue;
+		}
+		// `total N` lines from ls -l — drop
+		if (/^total\s+\d+/.test(line)) continue;
+		// Empty lines — drop
+		if (line.trim() === "") continue;
+		// ls -l row: drwxr-xr-x  3 jiun  staff  96 May  6 14:20 name
+		const m = line.match(
+			/^([dlcb-])[rwxst@+-]{9,}\s+\d+\s+\S+\s+\S+\s+(\S+)\s+\S+\s+\S+\s+\S+\s+(.+)$/,
+		);
+		if (m) {
+			const type = m[1];
+			const sizeStr = m[2];
+			const name = m[3];
+
+			// "." and ".." entries are noise in any listing
+			if (name === "." || name === "..") continue;
+
+			// In recursive sections, directory entries get their own section
+			// header below — emitting them here is redundant.
+			if (type === "d" && inSection) continue;
+
+			out.push(name + (type === "d" ? "/" : ` ${formatSize(sizeStr)}`));
+			continue;
+		}
+		// Fallback: keep line (unknown format)
+		out.push(line);
+	}
+	return out.join("\n");
+}
+
+function formatSize(s: string): string {
+	const n = Number.parseInt(s, 10);
+	if (Number.isNaN(n)) return s;
+	if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}M`;
+	if (n >= 1024) return `${(n / 1024).toFixed(1)}K`;
+	return `${n}B`;
+}
+
+/**
+ * Does the text before the first ":" plausibly name a file?
+ *
+ * grep gives no way to tell a "path:line:content" hit from a match whose own
+ * content happens to contain colons, so the prefix has to be vetted. It never
+ * contains whitespace and is never a bare number, which rules out log
+ * timestamps ("12:30:15 ERROR …") — those used to be parsed as file "12",
+ * line 30, with the message mangled into a fake location.
+ *
+ * `strict` additionally demands a separator or an extension. Use it for the
+ * "path:line:content" form, where a false positive silently invents a line
+ * number; the looser check is enough for "path:content", where the worst case
+ * is an extensionless filename kept verbatim.
+ */
+function looksLikePathPrefixed(line: string, strict: boolean): boolean {
+	const idx = line.indexOf(":");
+	if (idx <= 0) return false;
+	const prefix = line.slice(0, idx);
+	if (/\s/.test(prefix) || /^\d+$/.test(prefix)) return false;
+	if (!strict) return true;
+	return prefix.includes("/") || prefix.includes("\\") || /\.[A-Za-z0-9]{1,12}$/.test(prefix);
+}
+
+/**
+ * Group grep output by file, truncate long matched lines, drop redundant context.
+ * Aggressive only — balanced mode passes grep through.
+ */
+export function filterGrep(stdout: string, recursive = false): FilterResult {
+	const lines = stdout.split("\n").filter((l) => l.length > 0);
+	if (lines.length === 0) return { output: stdout, filtered: false };
+
+	const byFile = new Map<string, string[]>();
+	const pushHit = (file: string, hit: string) => {
+		const arr = byFile.get(file) ?? [];
+		arr.push(hit);
+		byFile.set(file, arr);
+	};
+	for (const line of lines) {
+		// grep -rn / rg: "path:lineNo:content"
+		// The path check matters: without it a timestamped log line matched by a
+		// single-file grep ("2024-01-01 12:30:15 ERROR boom") parses as
+		// file "2024-01-01 12" / line 30, mangling content into a fake location.
+		const m = looksLikePathPrefixed(line, true) ? line.match(/^([^:]+):(\d+):(.*)$/) : null;
+		if (m) {
+			const [, file, lineNo, content] = m;
+			const truncated = content.length > 100 ? `${content.slice(0, 100)}…` : content;
+			pushHit(file, `  L${lineNo}: ${truncated.trim()}`);
+			continue;
+		}
+		// grep -r without -n: "path:content" — don't lose the file name.
+		if (recursive && looksLikePathPrefixed(line, false)) {
+			const m2 = line.match(/^([^:]+):(.*)$/);
+			if (m2) {
+				const [, file, content] = m2;
+				const truncated = content.length > 100 ? `${content.slice(0, 100)}…` : content;
+				pushHit(file, `  ${truncated.trim()}`);
+				continue;
+			}
+		}
+		// Plain match with no path prefix
+		pushHit("(no path)", line.length > 100 ? `${line.slice(0, 100)}…` : line);
+	}
+
+	const out: string[] = [];
+	for (const [file, hits] of byFile) {
+		out.push(`${file} (${hits.length})`);
+		for (const h of hits.slice(0, 8)) out.push(h);
+		if (hits.length > 8) out.push(`  ... +${hits.length - 8} more matches`);
+	}
+	return { output: out.join("\n"), filtered: true };
+}
+
+/**
+ * df output — drop pseudo-filesystems (tmpfs, devfs, /dev/loop, etc.) that
+ * are usually noise, and shrink padding to single space.
+ */
+export function filterDf(stdout: string): FilterResult {
+	const lines = stdout.split("\n");
+	if (lines.length === 0) return { output: stdout, filtered: false };
+	const header = lines[0];
+	const out: string[] = [header.replace(/\s{2,}/g, " ")];
+	for (const line of lines.slice(1)) {
+		if (!line.trim()) continue;
+		// Drop noisy pseudo-filesystems
+		if (/^(tmpfs|devfs|devtmpfs|udev|overlay|map\s|none\s|\/dev\/loop)/.test(line)) continue;
+		out.push(line.replace(/\s{2,}/g, " "));
+	}
+	return { output: out.join("\n"), filtered: true };
+}
+
+/** du -a / du -h with many entries: keep just the largest 20 + total. */
+export function filterDu(stdout: string): FilterResult {
+	const lines = stdout.split("\n").filter((l) => l.trim() !== "");
+	if (lines.length <= 25) return { output: stdout, filtered: false };
+	// Each line is "<size>\t<path>" — sort by size descending.
+	const parsed = lines
+		.map((l) => {
+			const m = l.match(/^([\d.]+[KMGT]?B?)?\s*(.*)$/);
+			if (!m) return null;
+			const sizeRaw = m[1] ?? "0";
+			const path = m[2];
+			return { sizeRaw, sizeBytes: parseDuSize(sizeRaw), path, line: l };
+		})
+		.filter((x): x is NonNullable<typeof x> => x !== null);
+	parsed.sort((a, b) => b.sizeBytes - a.sizeBytes);
+	const top = parsed.slice(0, 20).map((p) => p.line);
+	return {
+		output: `(top 20 of ${parsed.length} entries by size)\n${top.join("\n")}`,
+		filtered: true,
+	};
+}
+
+function parseDuSize(s: string): number {
+	const m = s.match(/^([\d.]+)([KMGT])?B?$/i);
+	if (!m) return 0;
+	const n = Number.parseFloat(m[1]);
+	const unit = (m[2] ?? "").toUpperCase();
+	const factor =
+		unit === "T"
+			? 1024 ** 4
+			: unit === "G"
+				? 1024 ** 3
+				: unit === "M"
+					? 1024 ** 2
+					: unit === "K"
+						? 1024
+						: 1;
+	return n * factor;
+}
+
+/**
+ * ps aux output — keep PID, %CPU, %MEM, COMMAND only. Strip USER, VSZ, RSS,
+ * STAT, START, TIME and the heavy padding. Drop kernel/system noise.
+ */
+export function filterPs(stdout: string): FilterResult {
+	const lines = stdout.split("\n");
+	if (lines.length <= 2) return { output: stdout, filtered: false };
+	const header = lines[0];
+	// `\b%CPU\b` doesn't match because % is not a word char; use plain includes.
+	const isAux = header.includes("USER") && header.includes("%CPU") && header.includes("%MEM");
+	if (!isAux) return { output: stdout, filtered: false };
+
+	const out: string[] = ["PID  %CPU %MEM CMD"];
+	for (const line of lines.slice(1)) {
+		if (!line.trim()) continue;
+		// ps aux columns: USER PID %CPU %MEM VSZ RSS TT STAT STARTED TIME COMMAND
+		const parts = line.trim().split(/\s+/);
+		if (parts.length < 11) continue;
+		const pid = parts[1];
+		const cpu = parts[2];
+		const mem = parts[3];
+		const cmd = parts.slice(10).join(" ");
+		// Drop kernel threads (PID < 100, COMMAND in brackets) — usually noise
+		if (/^\[.*\]$/.test(cmd)) continue;
+		out.push(`${pid.padEnd(5)} ${cpu.padStart(4)} ${mem.padStart(4)} ${cmd}`);
+	}
+	return { output: out.join("\n"), filtered: true };
+}

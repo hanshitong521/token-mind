@@ -1,0 +1,58 @@
+{
+  "contract_id": "evaluation-contract-v2",
+  "evaluation_contract_version": "evaluation-contract-v2",
+  "query_bank_version": "query-bank-v1",
+  "baseline_id": "shejiu-docs-v2-official-14-20260826",
+  "fixture_version": "shejiu-docs-92chunks-69sources-v2",
+  "frozen_at": null,
+  "product_version": "1.8.0-convergence",
+  "retrieval_profile": "v2",
+  "phase": "A",
+  "phase_a_status": "retrieval-v2-available",
+  "phase_b_status": "production-hardened",
+  "supersedes_contract": "evaluation-contract-v1",
+  "forbidden_capabilities": [
+    "case_specific_query_doc_map",
+    "benchmark_query_classifier_leakage",
+    "case_specific_fusion_weight",
+    "evaluation_target_hardcoding"
+  ],
+  "deferred_capabilities": [
+    "production_abstain",
+    "runtime_authority_conflict_resolution",
+    "index_generation_directory"
+  ],
+  "reporting_required_fields": [
+    "baseline_id",
+    "query_bank_version",
+    "fixture_version",
+    "evaluation_contract_version",
+    "index_manifest_hash",
+    "corpus_digest"
+  ],
+  "official_regression": {
+    "required_pass": 14,
+    "total": 14
+  },
+  "official_holdout": {
+    "case_ids": ["S06", "S08", "S12"],
+    "required_pass": 3
+  },
+  "query_bank_holdout": {
+    "required": "all"
+  },
+  "release_gate": {
+    "golden_must_pass": 6,
+    "query_gate_must_pass": 9,
+    "mcp_live_tools": 11,
+    "query_bank_all_min_pass": 32,
+    "query_bank_holdout_min_pass": 3
+  },
+  "ssot_doc": "shejiuPro/docs/daily/20260826/contextforge-phase-a-execution-spec.md",
+  "archived_v1_baseline": {
+    "baseline_id": "shejiu-docs-full-20260825",
+    "evaluation_contract_version": "evaluation-contract-v1",
+    "official_session_replay": "10/14",
+    "frozen_at": "2026-08-25"
+  }
+}

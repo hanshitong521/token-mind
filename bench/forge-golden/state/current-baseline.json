@@ -1,0 +1,215 @@
+{
+  "retriever_gold": {
+    "mode": "semantic",
+    "date": "2026-08-28",
+    "corpus_files": 246,
+    "corpus_chunks": 866,
+    "queries": 63,
+    "recall_at_1": 0.7937,
+    "recall_at_3": 0.9683,
+    "recall_at_5": 1,
+    "mrr": 0.882,
+    "ndcg_at_5": 0.7715,
+    "by_type": {
+      "precise_symbol": {
+        "n": 40,
+        "recall_at_5": 1
+      },
+      "doc": {
+        "n": 13,
+        "recall_at_5": 1
+      },
+      "flow": {
+        "n": 10,
+        "recall_at_5": 1
+      }
+    },
+    "report": ".contextforge\\benchmarks\\performance\\retriever-gold-semantic-2026-08-28.json"
+  },
+  "agent_replay": {
+    "mode": "lexical",
+    "date": "2026-08-28",
+    "queries": 63,
+    "note": "replay source = gold queries (63; §30.G 目标 100，当前为语料全部真实 Agent 型查询)",
+    "old_avg_tokens": 95738,
+    "new_avg_tokens": 1430,
+    "token_saving": {
+      "mean": 0.9838,
+      "p50": 0.99,
+      "p90": 0.9924,
+      "p95": 0.9927,
+      "max": 0.9933,
+      "min": 0.8616
+    },
+    "old_avg_hits": 139.4,
+    "new_avg_hits": 2.3,
+    "answer_accuracy": {
+      "old": 1,
+      "new": 0.7937,
+      "recoverable": 1,
+      "lost_queries": [
+        "G03",
+        "G16",
+        "G18",
+        "G24",
+        "G27",
+        "G37",
+        "G40",
+        "G44",
+        "G46",
+        "G47",
+        "G48",
+        "G50",
+        "G60"
+      ]
+    },
+    "influence": {
+      "helpful": 0,
+      "harmful": 0,
+      "harmful_rate": 0,
+      "helpful_rate": 0,
+      "avg_stubs": 17
+    },
+    "report": ".contextforge\\benchmarks\\replay\\agent-replay-lexical-2026-08-28.json"
+  },
+  "retriever_gold_semantic": {
+    "mode": "semantic",
+    "date": "2026-08-28",
+    "corpus_files": 246,
+    "corpus_chunks": 866,
+    "queries": 63,
+    "recall_at_1": 0.7937,
+    "recall_at_3": 0.9683,
+    "recall_at_5": 1,
+    "mrr": 0.882,
+    "ndcg_at_5": 0.7715,
+    "by_type": {
+      "precise_symbol": {
+        "n": 40,
+        "recall_at_5": 1
+      },
+      "doc": {
+        "n": 13,
+        "recall_at_5": 1
+      },
+      "flow": {
+        "n": 10,
+        "recall_at_5": 1
+      }
+    },
+    "report": ".contextforge\\benchmarks\\performance\\retriever-gold-semantic-2026-08-28.json"
+  },
+  "retriever_gold_lexical": {
+    "mode": "lexical",
+    "date": "2026-08-28",
+    "corpus_files": 246,
+    "corpus_chunks": 866,
+    "queries": 63,
+    "recall_at_1": 0.7143,
+    "recall_at_3": 0.9683,
+    "recall_at_5": 1,
+    "mrr": 0.8378,
+    "ndcg_at_5": 0.7154,
+    "by_type": {
+      "precise_symbol": {
+        "n": 40,
+        "recall_at_5": 1
+      },
+      "doc": {
+        "n": 13,
+        "recall_at_5": 1
+      },
+      "flow": {
+        "n": 10,
+        "recall_at_5": 1
+      }
+    },
+    "report": ".contextforge\\benchmarks\\performance\\retriever-gold-lexical-2026-08-28.json"
+  },
+  "agent_replay_lexical": {
+    "mode": "lexical",
+    "date": "2026-08-28",
+    "queries": 63,
+    "note": "replay source = gold queries (63; §30.G 目标 100，当前为语料全部真实 Agent 型查询)",
+    "old_avg_tokens": 95738,
+    "new_avg_tokens": 1430,
+    "token_saving": {
+      "mean": 0.9838,
+      "p50": 0.99,
+      "p90": 0.9924,
+      "p95": 0.9927,
+      "max": 0.9933,
+      "min": 0.8616
+    },
+    "old_avg_hits": 139.4,
+    "new_avg_hits": 2.3,
+    "answer_accuracy": {
+      "old": 1,
+      "new": 0.7937,
+      "recoverable": 1,
+      "lost_queries": [
+        "G03",
+        "G16",
+        "G18",
+        "G24",
+        "G27",
+        "G37",
+        "G40",
+        "G44",
+        "G46",
+        "G47",
+        "G48",
+        "G50",
+        "G60"
+      ]
+    },
+    "influence": {
+      "helpful": 0,
+      "harmful": 0,
+      "harmful_rate": 0,
+      "helpful_rate": 0,
+      "avg_stubs": 17
+    },
+    "report": ".contextforge\\benchmarks\\replay\\agent-replay-lexical-2026-08-28.json"
+  },
+  "agent_replay_semantic": {
+    "mode": "semantic",
+    "date": "2026-08-28",
+    "queries": 63,
+    "note": "replay source = gold queries (63; §30.G 目标 100，当前为语料全部真实 Agent 型查询)",
+    "old_avg_tokens": 95738,
+    "new_avg_tokens": 1444,
+    "token_saving": {
+      "mean": 0.9838,
+      "p50": 0.9899,
+      "p90": 0.9924,
+      "p95": 0.9929,
+      "max": 0.9933,
+      "min": 0.8485
+    },
+    "old_avg_hits": 139.4,
+    "new_avg_hits": 2.6,
+    "answer_accuracy": {
+      "old": 1,
+      "new": 0.8889,
+      "recoverable": 1,
+      "lost_queries": [
+        "G03",
+        "G18",
+        "G24",
+        "G44",
+        "G47",
+        "G48",
+        "G50"
+      ]
+    },
+    "influence": {
+      "helpful": 0,
+      "harmful": 0,
+      "harmful_rate": 0,
+      "helpful_rate": 0,
+      "avg_stubs": 17.4
+    },
+    "report": ".contextforge\\benchmarks\\replay\\agent-replay-semantic-2026-08-28.json"
+  }
+}

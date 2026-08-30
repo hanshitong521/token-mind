@@ -1,0 +1,126 @@
+version: "2"
+matrix_id: eligibility-matrix-v2
+policy_version: registry-v1
+
+# §18: 四级资格 PRIMARY_ELIGIBLE / SUPPORTING_ONLY / FALLBACK_ONLY / FORBIDDEN
+# §19: 输入只基于 answer_type + doc_role + authority_class + lifecycle_status + version_relation + temporal_relation
+# Rule Before Score: 先判资格，资格通过才进 ranking
+#
+# 输入键: answer_type + authority_class (主) + lifecycle_status + temporal_relation
+# 输出值: PRIMARY_ELIGIBLE / SUPPORTING_ONLY / FALLBACK_ONLY / FORBIDDEN
+#
+# 语义:
+#   FORBIDDEN       → remove
+#   SUPPORTING_ONLY → 不进入 primary pool
+#   FALLBACK_ONLY   → 只有无 PRIMARY 时才可考虑
+#   PRIMARY_ELIGIBLE → 进入 primary ranking
+
+# canonical_rule: 业务规则查询（pin/priority/规则/口径）
+canonical_rule:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FORBIDDEN
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FORBIDDEN
+
+# current_status: 当前状态查询（drift/回填/日报/财账）
+current_status:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FORBIDDEN
+  INFORMATIONAL: PRIMARY_ELIGIBLE  # DAILY 报告也算当前状态来源
+  UNKNOWN: FALLBACK_ONLY
+
+# historical: 历史/归档/superseded 查询
+# INFORMATIONAL PRIMARY：归档 daily/meta 报告是历史查询的主答案（否则 SUPERSEDED META
+#   被锁在 SUPPORTING，lifecycle_override 只收紧不放宽 → 永远进不了 primary）
+historical:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: PRIMARY_ELIGIBLE  # 历史查询 META/DAILY 都可作 primary
+  EVIDENCE: SUPPORTING_ONLY
+  INFORMATIONAL: PRIMARY_ELIGIBLE
+  UNKNOWN: FALLBACK_ONLY
+
+# performance: 性能/bench/latency 查询
+# ponytail: EVIDENCE SUPPORTING_ONLY→PRIMARY_ELIGIBLE。perf 优化的主要答案就是 BENCHMARK/EVIDENCE 报告，
+#   不应只作 supporting（S11 brandHandle-list-perf-optimize 被排到 FORBIDDEN/SUPPORTING 外）。
+performance:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: PRIMARY_ELIGIBLE
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FORBIDDEN
+
+# test_report: 测试报告/audit/accuracy 查询
+test_report:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: PRIMARY_ELIGIBLE  # TEST_REPORT 是这类查询的主要答案
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FORBIDDEN
+
+# implementation: 代码实现/mapper/serviceImpl 查询
+implementation:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FORBIDDEN
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FALLBACK_ONLY
+
+# troubleshooting: 报错/失败/fix/troubleshoot
+troubleshooting:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE  # PITFALL 属 AUTHORITATIVE，可作 primary
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FORBIDDEN
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FALLBACK_ONLY
+
+# benchmark: benchmark 查询（区分于 performance）
+benchmark:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: SUPPORTING_ONLY
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: PRIMARY_ELIGIBLE  # BENCHMARK 文档是主要答案
+  INFORMATIONAL: FORBIDDEN
+  UNKNOWN: FORBIDDEN
+
+# ambiguous: 默认/未明确分类
+ambiguous:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FORBIDDEN
+  INFORMATIONAL: PRIMARY_ELIGIBLE  # DAILY 兜底
+  UNKNOWN: FALLBACK_ONLY
+
+# unknown: 兜底
+unknown:
+  CANONICAL: PRIMARY_ELIGIBLE
+  AUTHORITATIVE: PRIMARY_ELIGIBLE
+  SUPPORTING: SUPPORTING_ONLY
+  EVIDENCE: FALLBACK_ONLY
+  INFORMATIONAL: PRIMARY_ELIGIBLE
+  UNKNOWN: FALLBACK_ONLY
+
+# lifecycle 覆盖规则（同 answer_type 下，lifecycle 进一步约束）
+# SUPERSEDED/ARCHIVED 默认 FORBIDDEN，除非 temporal_intent=historical
+lifecycle_override:
+  SUPERSEDED:
+    historical: PRIMARY_ELIGIBLE
+    current: FORBIDDEN
+    default: SUPPORTING_ONLY
+  ARCHIVED:
+    historical: PRIMARY_ELIGIBLE
+    current: FORBIDDEN
+    default: SUPPORTING_ONLY
+  DEPRECATED:
+    historical: SUPPORTING_ONLY
+    current: FALLBACK_ONLY
+    default: FALLBACK_ONLY

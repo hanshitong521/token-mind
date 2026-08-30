@@ -1,0 +1,65 @@
+{
+  "name": "context-compress",
+  "version": "2026.8.1",
+  "description": "Context-aware MCP server that compresses tool output for Claude Code",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "context-compress": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc && node esbuild.config.mjs",
+    "build:hooks": "node esbuild.config.mjs --hooks-only",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --max-diagnostics=200 src/",
+    "lint:fix": "biome check --write --max-diagnostics=200 src/",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test:unit": "node --import tsx --test tests/unit/*.test.ts",
+    "test:integration": "node --import tsx --test tests/integration/*.test.ts",
+    "bench:quality": "tsx src/bench/run.ts",
+    "clean": "rm -rf dist dist-bin",
+    "build:bin": "bun build --compile --target=bun-darwin-arm64 ./src/cli/lite.ts --outfile=./dist-bin/cc-lite-darwin-arm64 && bun build --compile --target=bun-darwin-x64 ./src/cli/lite.ts --outfile=./dist-bin/cc-lite-darwin-x64 && bun build --compile --target=bun-linux-x64 ./src/cli/lite.ts --outfile=./dist-bin/cc-lite-linux-x64 && bun build --compile --target=bun-linux-arm64 ./src/cli/lite.ts --outfile=./dist-bin/cc-lite-linux-arm64",
+    "prepublishOnly": "npm run lint && npm run test && npm run build"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    ".codex-plugin/",
+    ".claude-plugin/",
+    ".mcp.json",
+    "dist/",
+    "docs/",
+    "hooks/",
+    "skills/",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Open330/context-compress.git"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "context",
+    "compression"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "baseline_id": "v1-frozen-3f0ec126",
+  "frozen_at": "2026-08-26T07:53:02.141Z",
+  "git_sha": "3f0ec1261bc1378588a4c9d0ef2fa9d30a92c3d7",
+  "retrieval_profile": "v1",
+  "data_root": "E:\\workA\\A-skill\\work-mind\\data",
+  "corpus": {
+    "path": "E:\\workA\\A-skill\\work-mind\\data\\demo\\shejiu-docs\\raw",
+    "digest": "d5247407ade92fd760d3eb117330126e0bba5f992f0f025091e00440d199b523",
+    "file_count": 68
+  },
+  "policy_hash": "e0fdf9e62316555c6b84f9ff3bc7ab058dea8bade42e5c1c24547b5fcbdba353",
+  "evaluation_contract_hash": "adbe7eafc75720978b629daa4c2652635f58e0628c9cf92de99d631545c2934c",
+  "hard_set_hash": "10558de3f7d2d94a25b49279550ce2d40839d73b0fe2a373d798d37f854c2784",
+  "v1_official_result": "9/14",
+  "v1_official_pass": [
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05",
+    "S06",
+    "S09",
+    "S12",
+    "S13"
+  ],
+  "v1_official_fail": [
+    "S07",
+    "S08",
+    "S10",
+    "S11",
+    "S14"
+  ],
+  "s08_forensics": {
+    "query": "踩坑 brandHandle",
+    "expected": "pitfalls-shejiuPro.md",
+    "actual_top1": "brandHandle-priority-pin.md",
+    "root_cause": "lexical_gap: 踩坑 not tokenized to pitfalls; brandHandle token over-ranks DAILY over PITFALL doc. Not corpus drift (pitfalls-shejiuPro.md present), not code regression. shejiuPro 10/14 baseline used different corpus — work-mind true v1 baseline is 9/14.",
+    "fix_target": "v2 Phase 3+ document-first retrieval with PITFALL authority > DAILY for 踩坑-type queries"
+  },
+  "ab_principle": "same HEAD + same corpus + same eval contract + same index generation; only retrieval_profile varies (v1 vs v2)"
+}

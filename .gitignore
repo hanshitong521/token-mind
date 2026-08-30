@@ -1,10 +1,26 @@
 # 第三方工具本体（可从各自仓库/发布页重新获取）
 rtk.exe
 Save-The-Token-main/
-context-compress-main/
+
+# context-compress：源码自 2026-08-30 起纳入跟踪（含 forge/ vendored 资产与
+# 结构化适配器——work-mind 删除后这些内容无处可取，必须随仓库走）。
+# 依赖与构建产物仍忽略。
+context-compress-main/*
+!context-compress-main/src/
+!context-compress-main/tests/
+!context-compress-main/hooks/
+!context-compress-main/scripts/
+!context-compress-main/package.json
+!context-compress-main/package-lock.json
+!context-compress-main/tsconfig.json
+!context-compress-main/esbuild.config.mjs
+!context-compress-main/biome.json
 
 # bench 生成物（run_bench.py 可再生）
 bench/repo*/
 bench/fixtures/
 __pycache__/
 *.pyc
+
+# 会话本地配置
+.zcode/
