@@ -1,6 +1,6 @@
 # Token Tool Bench — measured results
 
-date: 2026-08-30 13:27
+date: 2026-08-30 13:59
 
 | case | raw tok | RTK tok | RTK save | RTK lost | CC balanced tok | save | lost | CC aggressive tok | save | lost |
 |---|---:|---:|---:|---|---:|---:|---|---:|---:|---|

@@ -13,6 +13,8 @@
  * Default is "balanced".
  */
 
+import { runToolAdapter } from "./adapters.js";
+
 export type FilterMode = "conservative" | "balanced" | "aggressive";
 
 /** Mode the user can request — includes the "auto" meta-mode that resolves to one of FilterMode. */
@@ -47,8 +49,6 @@ export interface FilterResult {
 	output: string;
 	filtered: boolean;
 }
-
-import { runToolAdapter } from "./adapters.js";
 
 /**
  * Never hand back an empty response for non-empty input.

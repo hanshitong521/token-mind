@@ -11,12 +11,16 @@
  *
  * 语料 = 本仓库真实文件（docs / _docs_source / src / mcp-client / scripts / test / 根目录文档）。
  * 指标 = Recall@1/3/5 + MRR + NDCG@5，path-level 匹配，排序口径 = raw_hits（过滤后、Gate 前）。
+ *
+ * VENDORED（work-mind @19cbfff → Token-Mind）：golden/基线/contract 数据已随仓库保存，
+ * 但本 harness 的语料仍绑定 work-mind 自身仓库布局——直接运行会在语料收集阶段报空。
+ * P5 启动时需把 CORPUS_DIRS/ROOT_FILES/GOLD 路径改指 Token-Mind 目标语料后才可跑。
  */
 import fs from "fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { chunkFile, collectSupportedFiles } from "../src/chunker/strategy.mjs";
-import { searchIndex, lexicalProbe } from "../src/lib/store.mjs";
+import { chunkFile, collectSupportedFiles } from "../../../context-compress-main/src/forge/src/chunker/strategy.mjs";
+import { searchIndex, lexicalProbe } from "../../../context-compress-main/src/forge/src/lib/store.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const GOLD = path.join(ROOT, ".contextforge", "benchmarks", "golden", "retriever-gold.json");

@@ -158,8 +158,10 @@ const SHAPE_ORDER = [parsePytest, parseJest, parseBuild];
  * Parse a structured report from tool output. Tries the command-keyed channel
  * first, then (only when no command is known) the shape-sniffing channel —
  * with `cmd` present a shape misfire must not override what the command says.
+ * Module-internal for now; the P2 budget gate will consume reports directly,
+ * at which point this gets exported.
  */
-export function applyToolAdapter(cmd: string | undefined, stdout: string): ToolReport | null {
+function applyToolAdapter(cmd: string | undefined, stdout: string): ToolReport | null {
 	if (cmd) {
 		for (const [re, parse] of CMD_HINTS) {
 			if (re.test(cmd)) return parse(stdout);
