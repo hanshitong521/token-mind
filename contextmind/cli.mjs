@@ -19,6 +19,7 @@
  * commands before the daemon would be two lie-sized placeholders.
  */
 
+import { spawn } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -638,6 +639,7 @@ const USAGE = `ContextMind CLI
   contextmind doctor [dir]         PASS/WARN/FAIL for every subsystem
   contextmind status [dir]         Paths, counts, locked settings
   contextmind report [--since 24h|7d|ISO] [--session ID] [--json]   Three-column token ledger
+  contextmind dashboard [dir] [--port 8899]    Live read-only token ledger UI (Ctrl+C to stop)
   contextmind gc [--days 30]       Prune telemetry, expire handles
   contextmind fetch <handle> [--lines a-b] [--pattern re] [--jsonPath p] [--offset n]
   contextmind config [--validate]
@@ -673,6 +675,22 @@ export function main(argv = process.argv.slice(2)) {
 			return configCmd(projectRoot, flags);
 		case "benchmark":
 			return benchmark(projectRoot, flags);
+		case "dashboard":
+			// Read-only view over telemetry (owner-approved 2C exception).
+			// spawn + inherit stdio: Ctrl+C stops both; exit code propagates.
+			{
+				const port = String(flags.port ?? 8899);
+				const child = spawn(process.execPath, [join(HERE, "dashboard.mjs"), projectRoot, "--port", port], {
+					stdio: "inherit",
+				});
+				child.on("error", (err) => {
+					console.error(`dashboard failed to start: ${err.message}`);
+					process.exit(1);
+				});
+				// Keep this process alive alongside the child (it holds stdio).
+				child.on("exit", (code) => process.exit(code ?? 0));
+				return 0;
+			}
 		case "help":
 		case "--help":
 		case "-h":
