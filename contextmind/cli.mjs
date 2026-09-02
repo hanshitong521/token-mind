@@ -423,6 +423,18 @@ function doctor(projectRoot) {
 
 // ─── report / gc / fetch / status ───
 
+/** `--since 24h` / `--since 7d` / ISO string -> ISO timestamp (or null). */
+function parseSince(value) {
+	if (!value) return null;
+	const m = String(value).match(/^(\d+)\s*(h|d|w)$/i);
+	if (m) {
+		const unit = { h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2].toLowerCase()];
+		return new Date(Date.now() - Number(m[1]) * unit).toISOString();
+	}
+	const t = Date.parse(value);
+	return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
 function report(projectRoot, args) {
 	const cfg = loadConfig(projectRoot);
 	const t = openTelemetry(cfg);
@@ -430,12 +442,22 @@ function report(projectRoot, args) {
 		console.error(`telemetry unavailable: ${t.failed ?? "unknown"}`);
 		return 1;
 	}
-	const since = args.since ?? null;
+	const since = parseSince(args.since);
+	if (args.since && !since) {
+		t.close();
+		console.error(`invalid --since value: ${args.since} (use e.g. 24h, 7d, or an ISO timestamp)`);
+		return 1;
+	}
 	const sessionId = args.session ?? null;
 	const sum = t.summary({ since, sessionId });
 	t.close();
+	const period = sessionId
+		? `session ${sessionId}`
+		: since
+			? `since ${since}`
+			: "All time";
 	if (args.json) console.log(JSON.stringify(sum, null, 2));
-	else console.log(formatSummary(sum, { title: `ContextMind ledger — ${projectRoot}` }));
+	else console.log(formatSummary(sum, { title: `ContextMind Token Ledger — ${projectRoot}`, period }));
 	return 0;
 }
 
@@ -485,7 +507,9 @@ function fetchHandle(projectRoot, handleId, args) {
 			toolName: "fetch",
 			handleId,
 			handleFetched: 1,
-			rawTokens: result.rawTokens,
+			// Ledger rule (S8, G-S8-06): a fetch is a spend, not a saving.
+			// raw = emitted = what was actually returned.
+			rawTokens: result.tokens,
 			emittedTokens: result.tokens,
 			toolEmittedSavings: 0,
 			success: true,
@@ -613,7 +637,7 @@ const USAGE = `ContextMind CLI
   contextmind uninstall [dir]      Remove exactly what install added
   contextmind doctor [dir]         PASS/WARN/FAIL for every subsystem
   contextmind status [dir]         Paths, counts, locked settings
-  contextmind report [--since ISO] [--session ID] [--json]
+  contextmind report [--since 24h|7d|ISO] [--session ID] [--json]   Three-column token ledger
   contextmind gc [--days 30]       Prune telemetry, expire handles
   contextmind fetch <handle> [--lines a-b] [--pattern re] [--jsonPath p] [--offset n]
   contextmind config [--validate]

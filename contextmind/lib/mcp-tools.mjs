@@ -390,11 +390,16 @@ async function toolGet(args, rt) {
 		`\n[contextmind] task="${task.slice(0, 80)}" budget=${budget} tok packed=${provenance.length} ` +
 		`files omitted=${omitted}; raise budget_tokens or narrow anchors for more.`;
 	const text = `${body}\n${footer}`;
+	// Ledger rule (S8, G-S8-01): an event may never show emitted > raw. For
+	// tiny anchors the assembly overhead (headers + footer) can exceed the
+	// counterfactual full read; that call saved nothing, so raw is recorded
+	// as the emitted size rather than inventing a negative saving.
+	const emitted = countTokens(text);
 	record(rt, {
 		toolName: "context_get",
 		success: true,
-		rawTokens: rawTotal,
-		emittedTokens: countTokens(text),
+		rawTokens: Math.max(rawTotal, emitted),
+		emittedTokens: emitted,
 		note: `packed ${provenance.length} files`,
 	});
 	return { content: [{ type: "text", text }] };
@@ -476,10 +481,13 @@ async function toolFetch(args, rt) {
 		record(rt, { toolName: "context_fetch", success: false, rawTokens: 0, emittedTokens: 0, handleId: handle });
 		return { content: [{ type: "text", text: `unknown or expired handle: ${handle}` }], isError: true };
 	}
+	// Ledger rule (S8, G-S8-06): a fetch is what the model SPENT to pull
+	// evidence back, not a second compression. raw = emitted = what was
+	// actually returned; the original event's history is never rewritten.
 	record(rt, {
 		toolName: "context_fetch",
 		success: true,
-		rawTokens: result.rawTokens,
+		rawTokens: result.tokens,
 		emittedTokens: result.tokens,
 		handleId: handle,
 		handleFetched: 1,

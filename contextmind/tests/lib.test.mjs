@@ -412,8 +412,10 @@ describe("telemetry", () => {
 		t.close();
 
 		const text = formatSummary(new Telemetry({ dbPath: path }).summary());
-		assert.match(text, /prevented_read_tokens/);
-		assert.match(text, /proxy_llm_savings/);
+		// S8 ledger format: prevented read is its own line, never inside AVOIDED.
+		assert.match(text, /PREVENTED READ\s+5,000 tokens\s+\(separate column; not counted in AVOIDED\)/);
+		assert.match(text, /AVOIDED\s+800 tokens/);
+		assert.match(text, /PROXY LLM SAVINGS\s+200 tokens/);
 		new Telemetry({ dbPath: path }).close();
 	});
 

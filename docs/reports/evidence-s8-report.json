@@ -1,0 +1,227 @@
+{
+  "totals": {
+    "events": 8,
+    "raw_tokens": 7327,
+    "emitted_tokens": 1585,
+    "prevented_read_tokens": 1416,
+    "tool_emitted_savings": 5742,
+    "proxy_llm_savings": 0,
+    "handle_created": 1,
+    "handle_fetched": 1,
+    "dedup_hit": 0,
+    "read_blocked": 1,
+    "read_override": 0
+  },
+  "ledger": {
+    "raw": 7327,
+    "emitted": 1585,
+    "avoided": 5742,
+    "prevented_read": 1416,
+    "proxy_llm": 0,
+    "ratio": 0.7836768117920022
+  },
+  "bySurface": [
+    {
+      "key": "mcp",
+      "events": 7,
+      "raw_tokens": 7327,
+      "emitted_tokens": 1585,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.7836768117920022
+    },
+    {
+      "key": "read",
+      "events": 1,
+      "raw_tokens": 0,
+      "emitted_tokens": 0,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 0,
+      "ratio": null
+    }
+  ],
+  "byTool": [
+    {
+      "key": "context_orient",
+      "events": 1,
+      "raw_tokens": 6250,
+      "emitted_tokens": 508,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.91872
+    },
+    {
+      "key": "context_find",
+      "events": 1,
+      "raw_tokens": 433,
+      "emitted_tokens": 433,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "context_run",
+      "events": 3,
+      "raw_tokens": 431,
+      "emitted_tokens": 431,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "context_impact",
+      "events": 1,
+      "raw_tokens": 189,
+      "emitted_tokens": 189,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "context_fetch",
+      "events": 1,
+      "raw_tokens": 24,
+      "emitted_tokens": 24,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "Read",
+      "events": 1,
+      "raw_tokens": 0,
+      "emitted_tokens": 0,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 0,
+      "ratio": null
+    }
+  ],
+  "bySession": [
+    {
+      "key": "(none)",
+      "events": 8,
+      "raw_tokens": 7327,
+      "emitted_tokens": 1585,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.7836768117920022
+    }
+  ],
+  "byTask": [
+    {
+      "key": "(none)",
+      "events": 8,
+      "raw_tokens": 7327,
+      "emitted_tokens": 1585,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.7836768117920022
+    }
+  ],
+  "byAdapter": [
+    {
+      "key": "codegraph explore TBuyinOrderServiceImpl",
+      "events": 1,
+      "raw_tokens": 6250,
+      "emitted_tokens": 508,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.91872
+    },
+    {
+      "key": "codegraph query OrderServiceImpl",
+      "events": 1,
+      "raw_tokens": 433,
+      "emitted_tokens": 433,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "node -e \"const e=new Error(\"ORDER_BOOM_913\"); console.error(e.stack); process.exit(3)\"",
+      "events": 2,
+      "raw_tokens": 288,
+      "emitted_tokens": 288,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "codegraph impact isoDateOnly",
+      "events": 1,
+      "raw_tokens": 189,
+      "emitted_tokens": 189,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "node C:/Users/Administrator/AppData/Local/Temp/s8-fail.js",
+      "events": 1,
+      "raw_tokens": 143,
+      "emitted_tokens": 143,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "(none)",
+      "events": 2,
+      "raw_tokens": 24,
+      "emitted_tokens": 24,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    }
+  ],
+  "byContentType": [
+    {
+      "key": "generic",
+      "events": 3,
+      "raw_tokens": 6582,
+      "emitted_tokens": 840,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.8723792160437557
+    },
+    {
+      "key": "source",
+      "events": 3,
+      "raw_tokens": 721,
+      "emitted_tokens": 721,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    },
+    {
+      "key": "(none)",
+      "events": 2,
+      "raw_tokens": 24,
+      "emitted_tokens": 24,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    }
+  ],
+  "bySuccess": [
+    {
+      "key": "1",
+      "events": 4,
+      "raw_tokens": 6896,
+      "emitted_tokens": 1154,
+      "prevented_read_tokens": 0,
+      "tool_emitted_savings": 5742,
+      "ratio": 0.8326566125290024
+    },
+    {
+      "key": "0",
+      "events": 4,
+      "raw_tokens": 431,
+      "emitted_tokens": 431,
+      "prevented_read_tokens": 1416,
+      "tool_emitted_savings": 0,
+      "ratio": 0
+    }
+  ],
+  "missing": []
+}

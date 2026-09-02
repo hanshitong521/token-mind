@@ -108,8 +108,13 @@ export class Telemetry {
 		// The columns are exclusive by construction (spec 24.4): a proxy surface's
 		// raw-minus-emitted belongs in proxy_llm_savings, and defaulting it into
 		// tool_emitted_savings as well would double count every proxy event.
+		// S8 G-S8-05 hardens the other boundary too: an event that carried
+		// prevented-read tokens never also claims emitted savings — those are
+		// tokens that never entered any payload and live in their own column only.
 		const toolSavings =
-			ev.toolEmittedSavings ?? (ev.surface === "proxy" ? 0 : Math.max(0, raw - emitted));
+			ev.preventedReadTokens > 0
+				? 0
+				: (ev.toolEmittedSavings ?? (ev.surface === "proxy" ? 0 : Math.max(0, raw - emitted)));
 		const row = [
 			new Date().toISOString(),
 			ev.sessionId ?? null,
@@ -146,7 +151,14 @@ export class Telemetry {
 		}
 	}
 
-	/** Aggregate the three columns plus counters. `since` is an ISO timestamp. */
+	/**
+	 * Aggregate the ledger plus counters, over every dimension the S8 report
+	 * needs (spec 24 / S8 freeze): total, session, task, tool, adapter,
+	 * content_type and success/failure. `since` is an ISO timestamp.
+	 *
+	 * The headline numbers are derived ONCE here (ledger) so the text and the
+	 * JSON report cannot disagree (G-S8-09).
+	 */
 	summary({ since = null, sessionId = null } = {}) {
 		if (!this.db) return null;
 		const where = [];
@@ -161,48 +173,51 @@ export class Telemetry {
 		}
 		const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-		const totals = this.db.prepare(`
-			SELECT
-				COUNT(*)                        AS events,
-				COALESCE(SUM(raw_tokens), 0)            AS raw_tokens,
-				COALESCE(SUM(emitted_tokens), 0)        AS emitted_tokens,
-				COALESCE(SUM(prevented_read_tokens), 0) AS prevented_read_tokens,
-				COALESCE(SUM(tool_emitted_savings), 0)  AS tool_emitted_savings,
-				COALESCE(SUM(proxy_llm_savings), 0)     AS proxy_llm_savings,
-				COALESCE(SUM(handle_created), 0)        AS handle_created,
-				COALESCE(SUM(handle_fetched), 0)        AS handle_fetched,
-				COALESCE(SUM(dedup_hit), 0)             AS dedup_hit,
-				COALESCE(SUM(read_blocked), 0)          AS read_blocked,
-				COALESCE(SUM(read_override), 0)         AS read_override
-			FROM events ${w}
-		`).get(...args);
+		const AGG = `
+			COUNT(*)                        AS events,
+			COALESCE(SUM(raw_tokens), 0)            AS raw_tokens,
+			COALESCE(SUM(emitted_tokens), 0)        AS emitted_tokens,
+			COALESCE(SUM(prevented_read_tokens), 0) AS prevented_read_tokens,
+			COALESCE(SUM(tool_emitted_savings), 0)  AS tool_emitted_savings,
+			COALESCE(SUM(proxy_llm_savings), 0)     AS proxy_llm_savings,
+			COALESCE(SUM(handle_created), 0)        AS handle_created,
+			COALESCE(SUM(handle_fetched), 0)        AS handle_fetched,
+			COALESCE(SUM(dedup_hit), 0)             AS dedup_hit,
+			COALESCE(SUM(read_blocked), 0)          AS read_blocked,
+			COALESCE(SUM(read_override), 0)         AS read_override`;
 
-		const bySurface = this.db.prepare(`
-			SELECT
-				surface,
-				COUNT(*)                        AS events,
-				COALESCE(SUM(raw_tokens), 0)            AS raw_tokens,
-				COALESCE(SUM(emitted_tokens), 0)        AS emitted_tokens,
-				COALESCE(SUM(prevented_read_tokens), 0) AS prevented_read_tokens,
-				COALESCE(SUM(tool_emitted_savings), 0)  AS tool_emitted_savings
-			FROM events ${w}
-			GROUP BY surface
-			ORDER BY raw_tokens DESC
-		`).all(...args);
+		const totals = this.db
+			.prepare(`SELECT ${AGG} FROM events ${w}`)
+			.get(...args);
 
-		const byTool = this.db.prepare(`
-			SELECT
-				COALESCE(tool_name, '(none)')  AS tool_name,
-				COUNT(*)                       AS events,
-				COALESCE(SUM(raw_tokens), 0)            AS raw_tokens,
-				COALESCE(SUM(emitted_tokens), 0)        AS emitted_tokens,
-				COALESCE(SUM(prevented_read_tokens), 0) AS prevented_read_tokens,
-				COALESCE(SUM(tool_emitted_savings), 0)  AS tool_emitted_savings
-			FROM events ${w}
-			GROUP BY tool_name
-			ORDER BY raw_tokens DESC
-			LIMIT 20
-		`).all(...args);
+		const groupBy = (col) => {
+			const rows = this.db
+				.prepare(
+					`SELECT COALESCE(${col}, '(none)') AS key,
+					        COUNT(*)                        AS events,
+					        COALESCE(SUM(raw_tokens), 0)            AS raw_tokens,
+					        COALESCE(SUM(emitted_tokens), 0)        AS emitted_tokens,
+					        COALESCE(SUM(prevented_read_tokens), 0) AS prevented_read_tokens,
+					        COALESCE(SUM(tool_emitted_savings), 0)  AS tool_emitted_savings
+					 FROM events ${w} GROUP BY ${col} ORDER BY raw_tokens DESC`,
+				)
+				.all(...args);
+			for (const r of rows) {
+				r.key = String(r.key); // sqlite returns 0/1 as numbers; group keys are strings
+				r.ratio = r.raw_tokens > 0 ? r.tool_emitted_savings / r.raw_tokens : null;
+			}
+			return rows;
+		};
+
+		// The headline ledger, derived once (G-S8-09: text and JSON share it).
+		const ledger = {
+			raw: totals.raw_tokens,
+			emitted: totals.emitted_tokens,
+			avoided: totals.tool_emitted_savings,
+			prevented_read: totals.prevented_read_tokens,
+			proxy_llm: totals.proxy_llm_savings,
+			ratio: totals.raw_tokens > 0 ? totals.tool_emitted_savings / totals.raw_tokens : null,
+		};
 
 		const missing = this.db.prepare(`
 			SELECT adapter_missing AS name, COUNT(*) AS events
@@ -210,7 +225,18 @@ export class Telemetry {
 			GROUP BY adapter_missing
 		`).all(...args);
 
-		return { totals, bySurface, byTool, missing };
+		return {
+			totals,
+			ledger,
+			bySurface: groupBy("surface"),
+			byTool: groupBy("tool_name"),
+			bySession: groupBy("session_id"),
+			byTask: groupBy("task_id"),
+			byAdapter: groupBy("adapter_used"),
+			byContentType: groupBy("content_type"),
+			bySuccess: groupBy("success"),
+			missing,
+		};
 	}
 
 	/** Delete events older than `days`. Returns rows removed. */
@@ -237,71 +263,74 @@ export function openTelemetry(cfg) {
 	return new Telemetry({ dbPath, enabled: cfg.telemetry.enabled });
 }
 
+const pct = (x) => (x === null || x === undefined ? "n/a" : `${(x * 100).toFixed(2)}%`);
+
 /**
- * Render a summary as text. Deliberately narrow: this is the S8 data model
- * check and the `contextmind report` surface, not the dashboard (spec 24.5 says
- * the data model comes first).
+ * Render the ledger as text (S8 freeze format). Every number comes from the
+ * same summary object the JSON report serializes, so the two cannot disagree
+ * (G-S8-09). No invented values: an empty ledger prints zeros, not blanks.
  */
-export function formatSummary(sum, { title = "ContextMind token ledger" } = {}) {
+export function formatSummary(sum, { title = "ContextMind Token Ledger", period = "All time" } = {}) {
 	const t = sum.totals;
+	const l = sum.ledger;
 	const lines = [];
 	lines.push(`# ${title}`);
 	lines.push("");
+	lines.push(`Period: ${period}`);
 	lines.push(`tokenizer: ${TOKENIZER_ID}`);
 	lines.push("");
-	lines.push("## Three-column accounting");
+	lines.push("## Ledger");
 	lines.push("");
-	lines.push("| column | tokens | meaning |");
-	lines.push("|---|---:|---|");
-	lines.push(
-		`| prevented_read_tokens | ${t.prevented_read_tokens} | Read Guard / Dedup kept out of the window |`,
-	);
-	lines.push(`| tool_emitted_savings | ${t.tool_emitted_savings} | raw tool payload minus emitted |`);
-	lines.push(`| proxy_llm_savings | ${t.proxy_llm_savings} | conversation proxy (0 on Cursor subscription) |`);
+	lines.push(`RAW        ${t.raw_tokens.toLocaleString("en-US")} tokens`);
+	lines.push(`EMITTED    ${t.emitted_tokens.toLocaleString("en-US")} tokens`);
+	lines.push(`AVOIDED    ${l.avoided.toLocaleString("en-US")} tokens`);
+	lines.push(`REDUCTION  ${pct(l.ratio)}`);
 	lines.push("");
-	lines.push(`events=${t.events}  raw=${t.raw_tokens}  emitted=${t.emitted_tokens}`);
-	const avoided = t.prevented_read_tokens + t.tool_emitted_savings + t.proxy_llm_savings;
-	const denom = t.raw_tokens + t.prevented_read_tokens;
-	lines.push(
-		`avoided_total=${avoided}` +
-			(denom > 0 ? `  ratio=${((avoided / denom) * 100).toFixed(1)}%` : "  ratio=n/a"),
-	);
+	lines.push(`PREVENTED READ  ${l.prevented_read.toLocaleString("en-US")} tokens  (separate column; not counted in AVOIDED)`);
+	if (l.proxy_llm > 0) lines.push(`PROXY LLM SAVINGS  ${l.proxy_llm.toLocaleString("en-US")} tokens  (BYOK only; 0 expected on Cursor subscription)`);
 	lines.push("");
-	lines.push("## Counters");
+	lines.push(`Handles created ${t.handle_created}   fetched ${t.handle_fetched}   dedup hits ${t.dedup_hit}   reads blocked ${t.read_blocked}   overrides ${t.read_override}`);
+	lines.push(`Events ${t.events}`);
 	lines.push("");
-	lines.push(
-		`handle_created=${t.handle_created} handle_fetched=${t.handle_fetched} dedup_hit=${t.dedup_hit} ` +
-			`read_blocked=${t.read_blocked} read_override=${t.read_override}`,
-	);
-	if (sum.bySurface.length > 0) {
-		lines.push("");
-		lines.push("## By surface");
-		lines.push("");
-		lines.push("| surface | events | raw | emitted | prevented_read | tool_savings |");
-		lines.push("|---|---:|---:|---:|---:|---:|");
-		for (const r of sum.bySurface) {
-			lines.push(
-				`| ${r.surface} | ${r.events} | ${r.raw_tokens} | ${r.emitted_tokens} | ${r.prevented_read_tokens} | ${r.tool_emitted_savings} |`,
-			);
-		}
+
+	lines.push("## By tool");
+	lines.push("");
+	lines.push("| tool | events | raw | emitted | avoided | ratio |");
+	lines.push("|---|---:|---:|---:|---:|---:|");
+	for (const r of sum.byTool) {
+		lines.push(`| ${r.key} | ${r.events} | ${r.raw_tokens} | ${r.emitted_tokens} | ${r.tool_emitted_savings} | ${pct(r.ratio)} |`);
 	}
-	if (sum.byTool.length > 0) {
-		lines.push("");
-		lines.push("## Top tools by raw tokens");
-		lines.push("");
-		lines.push("| tool | events | raw | emitted | prevented_read | tool_savings |");
-		lines.push("|---|---:|---:|---:|---:|---:|");
-		for (const r of sum.byTool) {
-			lines.push(
-				`| ${r.tool_name} | ${r.events} | ${r.raw_tokens} | ${r.emitted_tokens} | ${r.prevented_read_tokens} | ${r.tool_emitted_savings} |`,
-			);
-		}
+	lines.push("");
+
+	// Failure preservation (S8 must-test): failures must appear in the ledger
+	// and their ratio shows whether error evidence was protected rather than
+	// trimmed — a high failure ratio is a red flag, not a win.
+	lines.push("## By success / failure");
+	lines.push("");
+	lines.push("| outcome | events | raw | emitted | avoided |");
+	lines.push("|---|---:|---:|---:|---:|");
+	for (const r of sum.bySuccess) {
+		const label = r.key === "1" ? "success" : r.key === "0" ? "failure" : "unknown";
+		lines.push(`| ${label} | ${r.events} | ${r.raw_tokens} | ${r.emitted_tokens} | ${r.tool_emitted_savings} |`);
 	}
+	lines.push("");
+
+	if (sum.byAdapter.length > 0) {
+		lines.push("## By adapter");
+		lines.push("");
+		lines.push("| adapter | events | raw | emitted | avoided |");
+		lines.push("|---|---:|---:|---:|---:|");
+		for (const r of sum.byAdapter) {
+			lines.push(`| ${r.key} | ${r.events} | ${r.raw_tokens} | ${r.emitted_tokens} | ${r.tool_emitted_savings} |`);
+		}
+		lines.push("");
+	}
+
 	if (sum.missing.length > 0) {
-		lines.push("");
 		lines.push("## Missing adapters");
 		lines.push("");
 		for (const r of sum.missing) lines.push(`- ${r.name}: ${r.events} event(s)`);
+		lines.push("");
 	}
 	return `${lines.join("\n")}\n`;
 }
