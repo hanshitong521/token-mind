@@ -24,3 +24,10 @@ __pycache__/
 
 # 会话本地配置
 .zcode/
+
+# ContextMind 本机运行时状态（handle/telemetry 数据库，可重建，不入库）
+.contextmind/
+*.db
+*.db-wal
+*.db-shm
+

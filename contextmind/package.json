@@ -1,0 +1,16 @@
+{
+  "name": "contextmind",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ContextMind governance layer: hooks, output gate, handles, three-column telemetry",
+  "bin": {
+    "contextmind": "cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

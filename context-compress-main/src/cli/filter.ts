@@ -22,6 +22,8 @@ import { runToolAdapter } from "../adapters.js";
 import { pickModeAuto } from "../util/auto-mode.js";
 import { StreamCompressor } from "../util/stream-compress.js";
 import { formatBytes } from "../utils.js";
+import { ContentStore } from "../store.js";
+import { debug } from "../logger.js";
 
 // Generic dedup/progress/group pipeline kicks in once output crosses these
 // thresholds. Lower thresholds = pipeline runs on more outputs = better
@@ -135,6 +137,55 @@ export async function compressOutputAsync(
 const MODE_LIST = REQUESTED_MODES.join("|");
 const FILTER_USAGE = `Usage: context-compress filter [--cmd '<original command>'] [--mode <${MODE_LIST}>]`;
 const WRAP_USAGE = `Usage: context-compress wrap [--stream] [--mode <${MODE_LIST}>] <command...>`;
+
+/**
+ * Whether a compressed result carries a truncation marker. smartTruncate
+ * reserves room for its separator, so the result is always *below* the byte
+ * budget that triggered it — comparing lengths to the cap misses every
+ * truncation by the reserve (measured: 102,298 vs 102,400, no handle emitted).
+ * The markers are the signal; there are two (line-based and byte-based).
+ */
+function wasTruncated(out: string): boolean {
+	return out.includes(" truncated — showing first ") || out.includes("\n... [truncated] ...");
+}
+
+/**
+ * Index oversized raw output so a truncated result stays reversible.
+ *
+ * Truncation used to be a dead end: the model saw a capped buffer and the
+ * remainder of a build log or diff was gone. Indexing the captured raw output
+ * into the persistent store gives that remainder a handle the agent can drill
+ * into later (search / fetch by source id) — the same reversibility `execute`
+ * already has for >5KB outputs, applied to the CLI paths.
+ *
+ * Fail-open by contract: any store error returns null and the caller keeps the
+ * truncated output it would have printed anyway. `CONTEXT_COMPRESS_HANDLE=0`
+ * opts out (benchmarks measuring the pipeline itself).
+ */
+function indexHandle(
+	raw: string,
+	cmdLine: string | undefined,
+	maxIndexedSources: number,
+): string | null {
+	if (process.env.CONTEXT_COMPRESS_HANDLE === "0") return null;
+	let store: ContentStore | null = null;
+	try {
+		store = new ContentStore({ persistDb: true, maxIndexedSources });
+		const command = (cmdLine ?? "stdin").slice(0, 120);
+		const label = `${command} @ ${new Date().toISOString().slice(0, 19)}`;
+		const result = store.index(raw, label);
+		return (
+			`\n[context-compress handle] truncated output is reversible: full captured output ` +
+			`(${formatBytes(Buffer.byteLength(raw))}, ${result.totalChunks} chunks) indexed as source_id=${result.sourceId}.\n` +
+			`Retrieve with search {queries:["..."], sourceIds:[${result.sourceId}]} or fetch (handle "source:${result.sourceId}").\n`
+		);
+	} catch (error) {
+		debug("Handle indexing failed (keeping truncated output):", error);
+		return null;
+	} finally {
+		store?.close();
+	}
+}
 
 /** Report a usage problem on stderr and yield the conventional exit code. */
 function usageError(message: string, usage: string): number {
@@ -268,6 +319,18 @@ export async function runFilter(args: string[]): Promise<number> {
 	const mode = resolved.mode;
 	const input = await readStdin();
 	const { output: compressed } = await compressOutputAsync(input, cmd, mode);
+	// Same reversibility contract as wrap: if the result hit the budget cap the
+	// caller is looking at truncated content, so hand back a handle to the raw.
+	const cfg = loadConfig(resolveProjectDir());
+	if (Buffer.byteLength(compressed) >= cfg.maxOutputBytes) {
+		const handleLine = indexHandle(input, cmd, cfg.maxIndexedSources);
+		if (handleLine) {
+			process.stdout.write(compressed);
+			if (!compressed.endsWith("\n")) process.stdout.write("\n");
+			process.stdout.write(handleLine);
+			return 0;
+		}
+	}
 	process.stdout.write(compressed);
 	if (!compressed.endsWith("\n")) process.stdout.write("\n");
 	return 0;
@@ -530,8 +593,16 @@ function runBuffered(
 		// auto mode triggers an LLM call; concrete modes are sync. Both flow
 		// through compressOutputAsync.
 		compressOutputAsync(stdout, cmdLine, mode).then(({ output: compressed }) => {
+			// The compressed result reaching the budget means smartTruncate cut
+			// content; a capture cap means we never even saw the whole stream.
+			// Either way the tail survives only via a handle.
+			const truncated = capped || wasTruncated(compressed);
+			const handleLine = truncated
+				? indexHandle(stdout, cmdLine, loadConfig(resolveProjectDir()).maxIndexedSources)
+				: null;
 			process.stdout.write(compressed);
 			if (compressed && !compressed.endsWith("\n")) process.stdout.write("\n");
+			if (handleLine) process.stdout.write(handleLine);
 			writeBufferedStderr(
 				stderr,
 				resolveSignal(code, signal),

@@ -1,0 +1,15 @@
+---
+description: ContextMind context governance — hard routing rules
+alwaysApply: true
+---
+
+# ContextMind
+
+1. **Bounded evidence only.** No whole-file reads of `*ServiceImpl.java`, `*Mapper.xml`, or long canonical docs. Use `context_orient` / `context_find` / `context_get`, or Read with `offset`+`limit`.
+2. **Output is governed by hooks, not by memory.** Shell and MCP output is already compressed and budgeted. If evidence is missing, fetch the `handle=` shown in the result — do not re-run the command raw.
+3. **A `[duplicate evidence]` stub is the evidence.** Do not re-read the file to "check". Fetch the handle only if you need the body.
+4. **Canonical facts and code graph are serial, never parallel.** Business rules / pitfalls → query the facts source first. Code structure → `context_orient` first. Never both for the same question.
+5. **Default zero parallel explorers.** Heavy verification goes to `verification-runner`. Java structure search runs in this agent via CodeGraph, not in an `explore` subagent.
+6. **Never declare ContextMind product-complete** until `docs/reports/current_gate_state.json` has no FAIL rows.
+
+Overrides: pass `override_reason` on a Read when the whole file is genuinely required. It is counted.
