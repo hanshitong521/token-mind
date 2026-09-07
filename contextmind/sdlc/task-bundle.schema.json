@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contextmind/task-bundle/v1",
+  "title": "ContextMind TaskBundle v1",
+  "type": "object",
+  "required": ["version", "intent", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "id": { "type": "string", "maxLength": 120 },
+    "intent": {
+      "type": "object",
+      "required": ["goal"],
+      "additionalProperties": false,
+      "properties": {
+        "goal": { "type": "string", "maxLength": 500 },
+        "background": { "type": "string", "maxLength": 800 },
+        "success": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_globs": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "maxItems": 32
+        },
+        "deny_globs": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "maxItems": 32
+        },
+        "impact": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modules": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+            "fqcn_seeds": { "type": "array", "items": { "type": "string" }, "maxItems": 16 }
+          }
+        },
+        "forbidden_actions": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "maxItems": 12
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 300 },
+          "maxItems": 8
+        },
+        "plan_ref": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 400 },
+          "maxItems": 8
+        },
+        "acceptance": { "type": "string", "maxLength": 800 },
+        "self_check": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "exit_code": { "type": "integer" },
+            "command": { "type": "string", "maxLength": 400 },
+            "at": { "type": "string" }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "enum": ["manual", "handoff", "requirement-mind", "ponytail", "waiver"] },
+        "updated": { "type": "string" },
+        "handoff_type": { "type": "string" },
+        "micro": { "type": "boolean" },
+        "route": { "type": "string", "maxLength": 64 }
+      }
+    }
+  }
+}

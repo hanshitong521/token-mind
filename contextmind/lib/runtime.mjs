@@ -15,6 +15,9 @@
 import { getConfig } from "./config.mjs";
 import { Dedup } from "./dedup.mjs";
 import { openHandles } from "./handles.mjs";
+import { ResultCache } from "./result-cache.mjs";
+import { SessionSeen } from "./session-seen.mjs";
+import { CacheEngine } from "./cache-engine/index.mjs";
 import { openTelemetry } from "./telemetry.mjs";
 import { runOutputGate } from "./output-gate.mjs";
 
@@ -88,12 +91,26 @@ export function openRuntime(projectRoot) {
 	const handles = openHandles(cfg);
 	// Dedup shares the handle DB connection: one file, one WAL, one thing to gc.
 	const dedup = new Dedup(handles.db, { enabled: cfg.telemetry.enabled && handles.available });
+	const cache = new ResultCache(handles.db, cfg.cache ?? {});
+	const cacheEngine = new CacheEngine(handles.db, cfg);
+	const seen = new SessionSeen(handles.db);
+	const sessionId =
+		process.env.CURSOR_SESSION_ID ??
+		process.env.CONTEXTMIND_SESSION_ID ??
+		`mcp-${process.pid}`;
 	return {
 		cfg,
 		telemetry,
 		handles,
 		dedup,
-		gate: (args) => runOutputGate({ cfg, handles, dedup, ...args }),
+		cache,
+		cacheEngine,
+		seen,
+		sessionId,
+		gate: (args) => {
+			const sid = args.sessionId ?? sessionId;
+			return runOutputGate({ cfg, handles, dedup, ...args, sessionId: sid });
+		},
 		/**
 		 * Close both databases. Do NOT call this on a hook's hot path.
 		 *

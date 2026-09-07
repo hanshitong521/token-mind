@@ -70,8 +70,8 @@ export function evaluateShell(command, { cfg, mode } = {}) {
 	if (/(?:^|\s)(?:>|>>|\d?>&)\s*\S/.test(trimmed)) return { action: "skip", reason: "output redirected" };
 	// Piping means something downstream is already shaping the stream, and
 	// wrapping the head would change which process sees which bytes.
-	if (/\|/.test(trimmed)) return { action: "skip", reason: "piped" };
-	if (/&&|\|\||;/.test(trimmed)) return { action: "skip", reason: "multi-statement" };
+	// `||` is not a pipe; `;` / `&&` still produce one concatenated stdout — wrap the whole string.
+	if (/(^|[^|])\|([^|]|$)/.test(trimmed)) return { action: "skip", reason: "piped" };
 	if (/\s--?watch\b/.test(trimmed)) return { action: "skip", reason: "watch mode" };
 	if (/^(npm|yarn|pnpm|bun)\s+(run\s+)?(dev|start|watch|serve)\b/.test(trimmed)) {
 		return { action: "skip", reason: "dev server" };
@@ -83,7 +83,10 @@ export function evaluateShell(command, { cfg, mode } = {}) {
 		return { action: "skip", reason: "vitest defaults to watch" };
 	}
 
-	if (!WRAP_TARGETS.some((re) => re.test(trimmed))) return { action: "skip", reason: "not a wrap target" };
+	const statements = trimmed.split(/\s*(?:&&|;)\s*/).map((s) => s.trim()).filter(Boolean);
+	if (!statements.some((s) => WRAP_TARGETS.some((re) => re.test(s)))) {
+		return { action: "skip", reason: "not a wrap target" };
+	}
 
 	const cli = engineCliCommand();
 	const tokens = [process.execPath, cli, "wrap", "--mode", mode ?? cfg.engine.mode, trimmed];

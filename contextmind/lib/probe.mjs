@@ -12,9 +12,44 @@
  * generic "some adapters are missing" is not actionable.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { countTokens } from "./tokens.mjs";
+
+function codegraphBin(cfg) {
+	return cfg?.adapters?.codegraph?.bin ?? "codegraph";
+}
+
+function commandAvailable(bin) {
+	try {
+		if (bin.includes("/") || bin.includes("\\")) {
+			return existsSync(bin);
+		}
+		const win = process.platform === "win32";
+		const exts = win ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";") : [""];
+		for (const dir of (process.env.PATH ?? "").split(win ? ";" : ":")) {
+			if (!dir) continue;
+			for (const ext of exts) {
+				try {
+					if (statSync(join(dir, bin + ext)).isFile()) return true;
+				} catch {
+					/* next */
+				}
+			}
+		}
+	} catch {
+		return false;
+	}
+	return false;
+}
+
+function adapterSatisfied(name, adapter, declaredLower, cfg) {
+	const servers = adapter.servers ?? [];
+	const inMcp = servers.some((s) => declaredLower.some((d) => d.includes(s.toLowerCase())));
+	if (inMcp) return true;
+	if (name === "codegraph" && commandAvailable(codegraphBin(cfg))) return true;
+	return false;
+}
 
 export const WARNING_TOKEN_BUDGET = 120;
 
@@ -35,8 +70,8 @@ export function probeAdapters(cfg, projectRoot) {
 	for (const [name, adapter] of Object.entries(cfg.adapters ?? {})) {
 		if (!adapter?.enabled) continue;
 		const servers = adapter.servers ?? [];
-		const found = servers.some((s) => lower.some((d) => d.includes(s.toLowerCase())));
-		if (!found) missing.push({ name, servers });
+		if (adapterSatisfied(name, adapter, lower, cfg)) continue;
+		missing.push({ name, servers });
 	}
 	return { configured: declared, missing, declared };
 }

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP 实验室 · ContextMind Dashboard</title>
+<style>
+	:root {
+		--bg0: #070b12; --bg1: #0c1220; --surface: rgba(22, 30, 48, 0.88);
+		--border: rgba(148, 163, 184, 0.16); --text: #f1f5f9; --muted: #94a3b8;
+		--accent: #60a5fa; --accent-dim: rgba(96, 165, 250, 0.14);
+		--green: #34d399; --red: #f87171; --yellow: #fbbf24; --radius: 12px;
+		--mono: ui-monospace, Consolas, monospace;
+	}
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	body {
+		background: linear-gradient(180deg, var(--bg0), var(--bg1));
+		color: var(--text); font: 14px/1.5 "Segoe UI", "PingFang SC", sans-serif;
+		min-height: 100vh;
+	}
+	header.app-bar {
+		position: sticky; top: 0; z-index: 40;
+		display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+		gap: 12px; padding: 14px 24px;
+		background: rgba(7, 11, 18, 0.82); backdrop-filter: blur(12px);
+		border-bottom: 1px solid var(--border);
+	}
+	.nav a {
+		color: var(--accent); text-decoration: none; font-size: 13px;
+		padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+		background: var(--accent-dim); margin-left: 8px;
+	}
+	.nav a.active { font-weight: 600; border-color: var(--accent); }
+	main { max-width: 1280px; margin: 0 auto; padding: 20px; }
+	.alert { padding: 12px 14px; border-radius: var(--radius); margin-bottom: 14px; border: 1px solid var(--border); }
+	.alert.warn { border-color: var(--yellow); color: var(--yellow); }
+	.alert.err { border-color: var(--red); color: var(--red); }
+	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+	.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+	.list { max-height: 480px; overflow-y: auto; }
+	.item {
+		border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px;
+		cursor: pointer; text-align: left; width: 100%; background: transparent; color: inherit;
+	}
+	.item.sel { border-color: var(--accent); background: var(--accent-dim); }
+	.badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; margin-left: 6px; }
+	.badge.ok { background: rgba(52,211,153,.15); color: var(--green); }
+	.badge.bad { background: rgba(248,113,113,.15); color: var(--red); }
+	.badge.mid { background: #1e293b; color: var(--muted); }
+	pre { background: #0f1624; padding: 10px; border-radius: 8px; font-size: 11px; overflow: auto; max-height: 200px; }
+	textarea, input { width: 100%; margin: 6px 0; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: #0f1624; color: var(--text); font-family: var(--mono); font-size: 12px; }
+	button {
+		padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+		background: var(--accent-dim); color: var(--accent); cursor: pointer; margin: 4px 4px 4px 0;
+	}
+	button.danger { color: var(--red); }
+	.lesson { border-top: 1px solid var(--border); padding: 10px 0; font-size: 13px; }
+	.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+	select { padding: 6px 10px; border-radius: 8px; background: #0f1624; color: var(--text); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header class="app-bar">
+	<div>
+		<h1>MCP 实验室</h1>
+		<div style="color:var(--muted);font-size:12px;font-family:var(--mono)" id="meta">loading…</div>
+	</div>
+	<nav class="nav">
+		<a href="/dashboard">Token 账本</a>
+		<a href="/mcp-lab" class="active">MCP 实验室</a>
+		<a href="#" id="nexmind-link" style="display:none">NexMind 内页</a>
+	</nav>
+</header>
+<main>
+	<div id="align" class="alert warn" style="display:none"></div>
+	<div id="err" class="alert err" style="display:none"></div>
+	<div class="toolbar">
+		<select id="filter">
+			<option value="all">全部</option>
+			<option value="errors">失败 / FAIL</option>
+			<option value="archived">已归档</option>
+		</select>
+		<button type="button" id="refresh">刷新</button>
+		<button type="button" id="compress">压缩教训</button>
+	</div>
+	<section class="panel" style="margin-bottom:16px">
+		<h2 style="font-size:14px;margin-bottom:8px">主项目目录对齐</h2>
+		<input id="primary" placeholder="e:\workA\shejiuPro" />
+		<button type="button" id="savePrimary">保存</button>
+	</section>
+	<section class="panel" id="lessons-wrap" style="margin-bottom:16px;display:none">
+		<h2 style="font-size:14px;margin-bottom:8px">压缩教训（避免重复调错 MCP）</h2>
+		<div id="lessons"></div>
+	</section>
+	<div class="grid">
+		<div class="panel list" id="list"></div>
+		<div class="panel" id="detail">
+			<p style="color:var(--muted)">从左侧选择一条 MCP 调用</p>
+		</div>
+	</div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let DATA = null;
+let selectedId = null;
+
+function badge(e) {
+	const v = e.annotation?.verdict || e.auto_verdict || "";
+	if (v === "wrong" || v === "failed" || e.status === "error" || e.envelope_status === "FAIL")
+		return '<span class="badge bad">错误</span>';
+	if (v === "correct" || v === "helpful") return '<span class="badge ok">有效</span>';
+	if (v === "superseded") return '<span class="badge mid">已修复</span>';
+	return '<span class="badge mid">待判</span>';
+}
+
+function filtered() {
+	const f = $("filter").value;
+	const list = DATA?.entries ?? [];
+	if (f === "errors") return list.filter(e => e.status === "error" || e.envelope_status === "FAIL" || e.annotation?.verdict === "wrong");
+	if (f === "archived") return list.filter(e => e.annotation?.archived);
+	return list;
+}
+
+function renderList() {
+	const el = $("list");
+	const rows = filtered();
+	if (!rows.length) { el.innerHTML = '<p style="color:var(--muted)">暂无记录（在 NexMind/Cursor 里调用 MCP 后会出现）</p>'; return; }
+	el.innerHTML = rows.map(e => `
+		<button type="button" class="item ${e.id === selectedId ? "sel" : ""}" data-id="${e.id}">
+			<div><strong>${e.summary || e.tool_name}</strong>${badge(e)}</div>
+			<div style="font-size:11px;color:var(--muted);margin-top:4px">${e.at} · ${e.duration_ms}ms · ${e.mcp_server_name}</div>
+		</button>`).join("");
+	el.querySelectorAll(".item").forEach(btn => btn.addEventListener("click", () => {
+		selectedId = btn.dataset.id;
+		renderList();
+		renderDetail();
+	}));
+}
+
+function renderDetail() {
+	const e = DATA?.entries?.find(x => x.id === selectedId);
+	const el = $("detail");
+	if (!e) { el.innerHTML = '<p style="color:var(--muted)">从左侧选择一条 MCP 调用</p>'; return; }
+	el.innerHTML = `
+		<p><b>服务</b> ${e.mcp_server_name} · <b>工具</b> <code>${e.tool_name}</code></p>
+		<p>状态: ${e.status}${e.envelope_status ? " / 信封 " + e.envelope_status : ""} · 可能有效: ${e.auto_effective ? "是" : "否"}</p>
+		${e.error ? `<p style="color:var(--red)">${e.error}</p>` : ""}
+		${e.response_preview ? `<pre>${esc(e.response_preview)}</pre>` : ""}
+		<label>备注</label><textarea id="note" rows="2">${esc(e.annotation?.note || "")}</textarea>
+		<label>下次如何调整（写入压缩教训）</label><textarea id="adj" rows="2">${esc(e.annotation?.adjustment || "")}</textarea>
+		<div>
+			<button type="button" id="markOk">标记正确</button>
+			<button type="button" class="danger" id="markBad">错误并归档</button>
+			<button type="button" id="markNone">无作用</button>
+		</div>
+		<label>关联后续成功调用的 id</label>
+		<input id="fixId" placeholder="修复记录 id" />
+		<button type="button" id="linkFix">关联修复</button>
+	`;
+	$("markOk").onclick = () => annotate({ verdict: "correct", resolved: true });
+	$("markBad").onclick = () => annotate({ verdict: "wrong", archived: true, resolved: false });
+	$("markNone").onclick = () => annotate({ verdict: "no_effect" });
+	$("linkFix").onclick = async () => {
+		const fix_id = $("fixId").value.trim();
+		if (!fix_id) return;
+		await post("/api/mcp-activity/link-fix", { wrong_id: e.id, fix_id, adjustment: $("adj").value || $("note").value });
+		await load();
+	};
+}
+
+async function annotate(patch) {
+	if (!selectedId) return;
+	await post("/api/mcp-activity/annotate", {
+		id: selectedId,
+		note: $("note")?.value,
+		adjustment: $("adj")?.value,
+		...patch,
+	});
+	await load();
+}
+
+function esc(s) { return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;"); }
+
+async function post(path, body) {
+	const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+	if (!r.ok) throw new Error(await r.text());
+	return r.json();
+}
+
+async function load() {
+	$("err").style.display = "none";
+	try {
+		const r = await fetch("/api/mcp-activity?limit=200");
+		if (!r.ok) throw new Error("HTTP " + r.status);
+		DATA = await r.json();
+		const a = DATA.alignment;
+		$("meta").textContent = a.workspaceCwd;
+		if (a.primaryProjectRoot) $("primary").value = a.primaryProjectRoot;
+		const align = $("align");
+		if (!a.aligned) {
+			align.style.display = "block";
+			align.textContent = "工作区未与主项目对齐。主项目: " + (a.primaryProjectRoot || "未解析") + " — " + (a.warnings?.join(" ") || "");
+		} else align.style.display = "none";
+		const lessons = DATA.compressed_lessons || [];
+		if (lessons.length) {
+			$("lessons-wrap").style.display = "block";
+			$("lessons").innerHTML = lessons.map(l => `
+				<div class="lesson"><b>${esc(l.server)} / ${esc(l.tool)}</b> ×${l.wrong_count}
+				<div style="color:var(--muted);margin-top:4px">${esc(l.lesson)}</div>
+				${l.adjustment ? `<div style="color:var(--green);font-size:12px;margin-top:4px">调整: ${esc(l.adjustment)}</div>` : ""}</div>`).join("");
+		}
+		if (!selectedId && DATA.entries[0]) selectedId = DATA.entries[0].id;
+		renderList();
+		renderDetail();
+	} catch (err) {
+		$("err").style.display = "block";
+		$("err").textContent = String(err);
+	}
+}
+
+$("refresh").onclick = () => load();
+$("filter").onchange = () => { renderList(); };
+$("compress").onclick = async () => { await post("/api/mcp-activity/compress", {}); await load(); };
+$("savePrimary").onclick = async () => {
+	await post("/api/mcp-activity/primary", { primaryProjectRoot: $("primary").value.trim() });
+	await load();
+};
+fetch("/api/nav").then(r => r.json()).then(nav => {
+	const el = $("nexmind-link");
+	if (nav.nexmind_mcp_lab_query && el) { el.style.display = ""; el.href = nav.nexmind_mcp_lab_query; }
+}).catch(() => {});
+load();
+setInterval(load, 20000);
+</script>
+</body>
+</html>

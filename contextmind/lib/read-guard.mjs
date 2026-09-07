@@ -14,6 +14,8 @@
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
+import { evaluatePathScope } from "./task-bundle.mjs";
+import { FORBIDDEN_SCAN_HINT, forbiddenAgentScanPath } from "./path-guards.mjs";
 
 const LINE_SAMPLE_BYTES = 8_192;
 
@@ -77,13 +79,25 @@ export const DENY_NEXT_STEP =
  * @returns {{decision:"allow"|"deny"|"warn", rule:string, reason:string,
  *            preventedTokens:number, fileTokens:number, message?:string}}
  */
-export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolInput = {} }) {
+export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolInput = {}, taskBundle = null, projectRoot = null }) {
 	const cfgRead = cfg.read_guard;
 	if (!cfgRead.enabled) {
 		return { decision: "allow", rule: "disabled", reason: "read_guard disabled", preventedTokens: 0, fileTokens: 0 };
 	}
 
 	const bounded = Number.isFinite(Number(offset)) || Number.isFinite(Number(limit));
+	const forbidden = forbiddenAgentScanPath(filePath);
+	if (forbidden.blocked && !bounded) {
+		return {
+			decision: "deny",
+			rule: "forbidden_scan_path",
+			reason: forbidden.reason,
+			preventedTokens: 0,
+			fileTokens: 0,
+			message: FORBIDDEN_SCAN_HINT,
+		};
+	}
+
 	const stat = statFile(filePath);
 	if (!stat || !stat.isFile) {
 		// Unknown or missing: not ours to block. Failing closed on a path we
@@ -106,6 +120,26 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 			fileTokens,
 		};
 	}
+
+	if (taskBundle && projectRoot) {
+		const scope = evaluatePathScope({
+			filePath,
+			projectRoot,
+			bundle: taskBundle,
+			enforceAllow: cfg.sdlc?.enforce_allow !== false,
+		});
+		if (scope.decision === "deny") {
+			return {
+				decision: "deny",
+				rule: scope.rule,
+				reason: scope.reason,
+				preventedTokens: fileTokens,
+				fileTokens,
+				message: `ContextMind TaskBundle: ${scope.reason}\n${DENY_NEXT_STEP}`,
+			};
+		}
+	}
+
 	if (bounded) {
 		return { decision: "allow", rule: "bounded_range", reason: "explicit offset/limit", preventedTokens: 0, fileTokens };
 	}

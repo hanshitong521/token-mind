@@ -44,6 +44,10 @@ export function findHome(startDir = dirname(fileURLToPath(import.meta.url))) {
 
 export const HOME = findHome();
 
+if (HOME) {
+	await import(pathToFileURL(join(HOME, "lib", "llm-profile.mjs")).href);
+}
+
 /** Import one library module by file name. */
 export function lib(name) {
 	if (!HOME) throw new Error("ContextMind library not found");
@@ -52,24 +56,60 @@ export function lib(name) {
 
 const T_LIB_START = performance.now();
 
-const [runtime, readGuard, shellGuard, mcpGuard, probe, traps, handles, telemetry, dedup, config, outputGate, tokens, classify] =
-	HOME
-		? await Promise.all([
-				lib("runtime.mjs"),
-				lib("read-guard.mjs"),
-				lib("shell-guard.mjs"),
-				lib("mcp-guard.mjs"),
-				lib("probe.mjs"),
-				lib("traps.mjs"),
-				lib("handles.mjs"),
-				lib("telemetry.mjs"),
-				lib("dedup.mjs"),
-				lib("config.mjs"),
-				lib("output-gate.mjs"),
-				lib("tokens.mjs"),
-				lib("classify.mjs"),
-			])
-		: [];
+async function loadLibOptional(name) {
+	try {
+		return await lib(name);
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[contextmind] module ${name} failed to load (hooks continue): ${msg}`);
+		return null;
+	}
+}
+
+const coreModules = HOME
+	? await Promise.all([
+			lib("runtime.mjs"),
+			lib("read-guard.mjs"),
+			lib("shell-guard.mjs"),
+			lib("mcp-guard.mjs"),
+			lib("probe.mjs"),
+			lib("traps.mjs"),
+			lib("handles.mjs"),
+			lib("telemetry.mjs"),
+			lib("dedup.mjs"),
+			lib("config.mjs"),
+			lib("output-gate.mjs"),
+			lib("tokens.mjs"),
+			lib("classify.mjs"),
+			lib("task-bundle.mjs"),
+			lib("evolution.mjs"),
+			lib("shell-result.mjs"),
+			lib("memory-store.mjs"),
+		])
+	: [];
+
+export const [
+	runtime,
+	readGuard,
+	shellGuard,
+	mcpGuard,
+	probe,
+	traps,
+	handles,
+	telemetry,
+	dedup,
+	config,
+	outputGate,
+	tokens,
+	classify,
+	taskBundle,
+	evolution,
+	shellResult,
+	memoryStore,
+] = coreModules;
+
+/** Isolated load: a broken agent-state must not take down Read Guard / MCP hooks. */
+export const agentState = HOME ? await loadLibOptional("agent-state.mjs") : null;
 
 /**
  * Where the hook's milliseconds went. G4 requires latency to be reported and
@@ -97,18 +137,3 @@ export function dumpStages(label) {
 	stages.totalMs = performance.now() - T_PROCESS_START;
 	console.error(`[contextmind timing] ${label} ${JSON.stringify({ ...stages, totalMs: Math.round(stages.totalMs) })}`);
 }
-export {
-	runtime,
-	readGuard,
-	shellGuard,
-	mcpGuard,
-	probe,
-	traps,
-	handles,
-	telemetry,
-	dedup,
-	config,
-	outputGate,
-	tokens,
-	classify,
-};

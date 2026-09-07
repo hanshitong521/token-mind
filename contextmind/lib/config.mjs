@@ -15,18 +15,74 @@
  * does it.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import "./llm-profile.mjs";
+import { applyPeakCacheEngine } from "./cache-engine/peak-profile.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** Repo root: contextmind/lib -> contextmind -> Token-Mind. */
+export const CONTEXTMIND_ROOT = resolve(HERE, "..");
+
+/** Repo / package anchor (`.cursor` in a project, or `cursor` in Token-Mind). */
 export const REPO_ROOT = resolve(HERE, "..", "..");
 
+export function resolveHooksDir(cmRoot = CONTEXTMIND_ROOT) {
+	const tries = [
+		join(cmRoot, "..", "hooks"),
+		join(cmRoot, "hooks"),
+		join(resolve(cmRoot, ".."), "cursor", "hooks"),
+		join(resolve(cmRoot, "..", ".."), "cursor", "hooks"),
+	];
+	for (const d of tries) {
+		if (existsSync(join(d, "cm-lib.mjs"))) return resolve(d);
+	}
+	return resolve(cmRoot, "..", "hooks");
+}
+
+export function resolveAssetsDir(cmRoot = CONTEXTMIND_ROOT) {
+	const hooks = resolveHooksDir(cmRoot);
+	const parent = resolve(hooks, "..");
+	if (existsSync(join(parent, "rules", "contextmind.mdc"))) return parent;
+	const cursorUnderRepo = join(REPO_ROOT, "cursor");
+	if (existsSync(join(cursorUnderRepo, "rules", "contextmind.mdc"))) return cursorUnderRepo;
+	return parent;
+}
+
+function engineCliPathUnder(root) {
+	return join(root, "dist", "cli", "index.js");
+}
+
+function readInstallSourceRepo() {
+	try {
+		const manifestPath = join(REPO_ROOT, "contextmind-manifest.json");
+		const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+		return typeof parsed.source_repo === "string" ? resolve(parsed.source_repo) : null;
+	} catch {
+		return null;
+	}
+}
+
+function resolveEngineRoot() {
+	const candidates = [];
+	if (process.env.CONTEXTMIND_ENGINE_ROOT) {
+		candidates.push(resolve(process.env.CONTEXTMIND_ENGINE_ROOT));
+	}
+	candidates.push(join(REPO_ROOT, "context-compress-main"));
+	const src =
+		(process.env.CONTEXTMIND_SOURCE_REPO ? resolve(process.env.CONTEXTMIND_SOURCE_REPO) : null) ??
+		readInstallSourceRepo();
+	if (src) candidates.push(join(src, "context-compress-main"));
+	for (const root of candidates) {
+		if (existsSync(engineCliPathUnder(root))) return root;
+	}
+	return join(REPO_ROOT, "context-compress-main");
+}
+
 /** Where the vendored context-compress engine lives. */
-export const ENGINE_ROOT = join(REPO_ROOT, "context-compress-main");
+export const ENGINE_ROOT = resolveEngineRoot();
 
 const HOME_CONFIG = join(homedir(), ".contextmind.json");
 const PROJECT_CONFIG_NAME = ".contextmind.json";
@@ -71,6 +127,8 @@ export const DEFAULTS = {
 
 	mcp_guard: {
 		enabled: true,
+		/** When true, large codegraph_explore payloads are handleized instead of passed raw. */
+		govern_codegraph: false,
 		profiles: {
 			mysql_query: { max_tokens: 1400, preserve: ["columns", "row_count", "errors"], body: "handle" },
 			semantic_search: { max_tokens: 1400, preserve: ["paths", "scores"], body: "handle" },
@@ -93,9 +151,75 @@ export const DEFAULTS = {
 
 	adapters: {
 		codegraph: { enabled: true, probe_tools: true, servers: ["codegraph"], bin: "codegraph" },
-		serena: { enabled: false, servers: ["serena"] },
-		headroom: { enabled: true, as: "compressor_backend", servers: ["headroom"] },
-		mysql: { enabled: true, servers: ["ads-mysql", "ads-mysql-prod"] },
+		mysql: { enabled: true, servers: ["ads-mysql"] },
+	},
+
+	/** Bounded fetch unless the caller opts into raw. Selector cannot exceed these. */
+	fetch: {
+		default_lines: 80,
+		max_tokens: 1200,
+		allow_full: false,
+	},
+
+	/** TaskBundle v1 — optional task scope + session preamble (SDLC context layer). */
+	sdlc: {
+		enabled: true,
+		task_file: ".contextmind/task.active.json",
+		enforce_allow: true,
+		/** When true, Write/StrReplace on *.java without TaskBundle/waiver is denied. */
+		enforce_write_bundle: false,
+		execution_log: ".contextmind/execution.jsonl",
+		preamble_max_tokens: null,
+		sync_agent_state: true,
+		/** Inject StackRoute + AgentManifest into sessionStart. */
+		inject_route: true,
+		inject_manifest: true,
+	},
+	memory: {
+		episodic_enabled: true,
+		episodic_file: ".contextmind/memory/episodic.jsonl",
+		vector_backend: "episodic",
+	},
+	/** Project Brain — optional session-end memory (fixtures + JSONL). */
+	brain: {
+		project_id: "",
+		auto_record_on_session_end: false,
+		python: "",
+	},
+	cache: {
+		enabled: true,
+		backend: "auto",
+		ttl_sec: 600,
+		mem_max: 256,
+		redis_url: "",
+	},
+	cache_engine: {
+		promptCache: true,
+		contextCache: true,
+		toolCache: true,
+		sessionDelta: true,
+		semanticCache: false,
+		compression: false,
+		brainSync: false,
+		brainSyncOnStop: false,
+		stablePrefix: true,
+		stablePrefixMode: "always",
+		stablePrefixMaxTokens: 220,
+		stablePrefixTrimRules: false,
+		toolCachePreDeny: false,
+		orientSkipTokensEstimate: 364,
+		peak: false,
+		kvIntegration: false,
+		kvUrl: "",
+	},
+
+	/**
+	 * Optional APIs. "none" keeps CodeGraph/gate off the network (default).
+	 * Keys come from ~/.contextmind/profile.json env, not this file.
+	 */
+	providers: {
+		chat: "none",
+		embed: "none",
 	},
 };
 
@@ -104,7 +228,7 @@ export const DEFAULTS = {
  * with untrusted code, and these decide where raw tool output is written and
  * how long it is retained.
  */
-export const USER_SCOPE_ONLY_KEYS = ["handles", "telemetry"];
+export const USER_SCOPE_ONLY_KEYS = ["handles", "telemetry", "cache"];
 
 function isPlainObject(v) {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -201,6 +325,16 @@ const ENV_OVERRIDES = {
 	CONTEXTMIND_TELEMETRY_DB: (c, v) => {
 		c.telemetry = { ...c.telemetry, db: v };
 	},
+	CONTEXTMIND_REDIS_URL: (c, v) => {
+		c.cache = { ...c.cache, redis_url: v };
+	},
+	REDIS_URL: (c, v) => {
+		if (!c.cache.redis_url) c.cache = { ...c.cache, redis_url: v };
+	},
+	CONTEXTMIND_KV_BRIDGE_URL: (c, v) => {
+		if (!c.cache_engine) c.cache_engine = {};
+		if (!c.cache_engine.kvUrl) c.cache_engine = { ...c.cache_engine, kvUrl: v };
+	},
 };
 
 function applyEnv(cfg) {
@@ -213,6 +347,19 @@ function applyEnv(cfg) {
 	}
 	if (process.env.CONTEXTMIND_HANDLES === "0") {
 		cfg.handles = { ...cfg.handles, enabled: false };
+	}
+	if (process.env.CONTEXTMIND_CACHE === "0") {
+		cfg.cache = { ...cfg.cache, enabled: false };
+	}
+	if (process.env.CONTEXTMIND_CACHE_TTL_SEC) {
+		const n = Number(process.env.CONTEXTMIND_CACHE_TTL_SEC);
+		if (Number.isFinite(n) && n > 0) cfg.cache = { ...cfg.cache, ttl_sec: n };
+	}
+	if (process.env.CONTEXTMIND_CHAT_PROVIDER) {
+		cfg.providers = { ...cfg.providers, chat: process.env.CONTEXTMIND_CHAT_PROVIDER };
+	}
+	if (process.env.CONTEXTMIND_EMBED_PROVIDER) {
+		cfg.providers = { ...cfg.providers, embed: process.env.CONTEXTMIND_EMBED_PROVIDER };
 	}
 	return cfg;
 }
@@ -239,6 +386,12 @@ export function loadConfigFrom(userPath, projectDir) {
 				`(expected one of ${[...SUPPORTED_FIRST_LAYERS].join(", ")}); using cc_balanced.`,
 		);
 		cfg.shell.first_layer = "cc_balanced";
+	}
+	if (process.env.CONTEXTMIND_CACHE_PEAK === "1") {
+		cfg.cache_engine = { ...cfg.cache_engine, peak: true };
+	}
+	if (cfg.cache_engine?.peak || cfg.cache_engine?.peakMode === true) {
+		cfg.cache_engine = applyPeakCacheEngine(cfg.cache_engine);
 	}
 	if (!cfg.project_root) cfg.project_root = projectDir;
 	return cfg;
