@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a coding assistant."
+    },
+    {
+      "role": "user",
+      "content": "Fix the failing mapper test."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "arguments": "{\"selector\":\"MapperTest\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "FAILURE: expected 3 rows but found 2\n\tat MapperTest.insertBatch"
+    },
+    {
+      "role": "user",
+      "content": "The batch insert loses the last row. Fix it and re-run the test."
+    }
+  ]
+}

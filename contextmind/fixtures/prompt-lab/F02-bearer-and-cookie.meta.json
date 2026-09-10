@@ -1,0 +1,20 @@
+{
+  "id": "F02-bearer-and-cookie",
+  "file": "F02-bearer-and-cookie.md",
+  "category": "security",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 193,
+  "expect": {
+    "minBlocks": 1,
+    "secrets": true,
+    "secretKinds": [
+      "bearer_token",
+      "cookie"
+    ]
+  },
+  "secretValues": [
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    "8f14e45fceea167a5a36dedd4bea2543"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "D07-dynamic-memory-early",
+  "file": "D07-dynamic-memory-early.json",
+  "category": "cache-killer",
+  "sourceType": "openai",
+  "provider": "openai",
+  "bytes": 396,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "firstDynamicIsFirstBlock": true
+  },
+  "secretValues": []
+}

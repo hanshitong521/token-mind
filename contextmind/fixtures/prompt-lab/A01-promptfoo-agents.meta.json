@@ -1,0 +1,13 @@
+{
+  "id": "A01-promptfoo-agents",
+  "file": "A01-promptfoo-agents.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 22452,
+  "expect": {
+    "minBlocks": 1,
+    "real": true
+  },
+  "secretValues": []
+}

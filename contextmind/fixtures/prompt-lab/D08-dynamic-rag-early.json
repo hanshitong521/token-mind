@@ -1,0 +1,17 @@
+{
+  "model": "gpt-5-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Retrieved documents for query 41b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d: doc_1 ... doc_2 ..."
+    },
+    {
+      "role": "system",
+      "content": "Answer using only the retrieved documents."
+    },
+    {
+      "role": "user",
+      "content": "Summarise the retrieved documents."
+    }
+  ]
+}

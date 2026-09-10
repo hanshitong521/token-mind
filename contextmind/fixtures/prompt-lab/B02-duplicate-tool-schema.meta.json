@@ -1,0 +1,16 @@
+{
+  "id": "B02-duplicate-tool-schema",
+  "file": "B02-duplicate-tool-schema.json",
+  "category": "tool-mcp",
+  "sourceType": "tools",
+  "provider": "generic",
+  "bytes": 1002,
+  "expect": {
+    "minBlocks": 3,
+    "ruleIds": [
+      "Q12-SCHEMA-DUP",
+      "CACHE-004"
+    ]
+  },
+  "secretValues": []
+}

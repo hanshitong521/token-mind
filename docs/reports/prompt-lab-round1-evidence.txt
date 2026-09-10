@@ -1,0 +1,38 @@
+PROMPT_LAB_ROUND1_EVIDENCE v1
+generated_at=2026-09-09T03:46:42.273Z
+node=v22.22.2
+fixture_count=41
+
+RULE_EXECUTION
+  rules_registered=11
+  rules_executed_per_fixture_complete=true
+  rule_ids_seen=CACHE-001,CACHE-003,CACHE-004,Q01,Q02,Q03-CONFLICT,Q04-DUP-EXACT,Q04-DUP-NEAR,Q05,Q06,Q08,Q09,Q10,Q11,Q12-SCHEMA-DUP,Q13,Q15,SAFE-001
+
+SECRET_LEAKAGE
+  security_fixtures=4
+  plaintext_secret_leaks_in_public_analyze=0
+
+ROUNDTRIP_DO_NOT_TOUCH
+  fixtures=5 blocks_checked=7 blocks_lost=0
+
+FINGERPRINT
+  deterministic_runs=41/41
+  tool_reorder_changes_tools_segment=true
+  tool_reorder_changes_system_segment=false
+
+CACHE_ANALYZER
+  metrics_present=true
+  caseA_user_only_regression=false (expect false)
+  caseB_leading_timestamp_regression=true (expect true)
+  caseB_prefix_tokens=35->0
+  caseD_dynamic_early_regression=true (expect true)
+  caseD_prefix_tokens=35->0
+
+GATE
+  fixtures_recommendable_without_eval=0/41 (expect 0)
+
+PERF
+  fixture=A01-promptfoo-agents bytes=22452
+  deterministic_analyze_ms=93.05
+  blocks=39 findings=7 rules_ok=true
+

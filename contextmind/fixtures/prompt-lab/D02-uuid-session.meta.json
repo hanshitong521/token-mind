@@ -1,0 +1,14 @@
+{
+  "id": "D02-uuid-session",
+  "file": "D02-uuid-session.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 203,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "minNonStatic": 1
+  },
+  "secretValues": []
+}

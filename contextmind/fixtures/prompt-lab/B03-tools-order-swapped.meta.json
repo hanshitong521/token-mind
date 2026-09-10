@@ -1,0 +1,17 @@
+{
+  "id": "B03-tools-order-swapped",
+  "file": "B03-tools-order-swapped.json",
+  "category": "tool-mcp",
+  "sourceType": "tools",
+  "provider": "generic",
+  "bytes": 989,
+  "expect": {
+    "minBlocks": 3,
+    "fingerprintDiffFrom": "B01-mcp-tools-list",
+    "fingerprintSameSegments": [
+      "system",
+      "rules"
+    ]
+  },
+  "secretValues": []
+}

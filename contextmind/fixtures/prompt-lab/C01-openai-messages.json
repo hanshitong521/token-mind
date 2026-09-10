@@ -1,0 +1,17 @@
+{
+  "model": "gpt-5-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a careful coding assistant. Prefer the smallest correct change."
+    },
+    {
+      "role": "user",
+      "content": "Refactor OrderService to use constructor injection and run the unit tests."
+    },
+    {
+      "role": "assistant",
+      "content": "I will change the field injection to constructor injection first."
+    }
+  ]
+}

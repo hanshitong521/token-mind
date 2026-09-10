@@ -1,0 +1,13 @@
+{
+  "id": "B05-huge-tool-description",
+  "file": "B05-huge-tool-description.json",
+  "category": "tool-mcp",
+  "sourceType": "tools",
+  "provider": "generic",
+  "bytes": 1131,
+  "expect": {
+    "minBlocks": 1,
+    "minTokens": 200
+  },
+  "secretValues": []
+}

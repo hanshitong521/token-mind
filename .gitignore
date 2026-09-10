@@ -19,11 +19,18 @@ context-compress-main/*
 # bench 生成物（run_bench.py 可再生）
 bench/repo*/
 bench/fixtures/
+bench/*.log
 __pycache__/
 *.pyc
 
 # 会话本地配置
 .zcode/
+
+# 本机 IDE / 临时调试脚本
+.trae/
+_deb.mjs
+_deb2.mjs
+_smoke.mjs
 
 # ContextMind 本机运行时状态（handle/telemetry 数据库，可重建，不入库）
 .contextmind/

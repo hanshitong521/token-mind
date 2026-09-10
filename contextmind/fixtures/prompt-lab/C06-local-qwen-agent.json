@@ -1,0 +1,13 @@
+{
+  "model": "qwen2.5-72b-instruct",
+  "messages": [
+    {
+      "role": "system",
+      "content": "<|im_start|>system\n你是本地部署的编码助手。<|im_end|>"
+    },
+    {
+      "role": "user",
+      "content": "为 OrderController 增加分页参数校验，并补充边界测试。"
+    }
+  ]
+}

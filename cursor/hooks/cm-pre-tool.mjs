@@ -114,22 +114,30 @@ if (
 	);
 }
 
-// ─── context_fetch full=true (token leak) ───
-if (name === "callmcptool" && innerMcp.includes("context_fetch")) {
-	const innerArgs = args.arguments ?? args.tool_input ?? {};
-	if (innerArgs?.full === true) {
-		record({
-			surface: "mcp",
-			toolName: "context_fetch",
-			sessionId,
-			readBlocked: 1,
-			success: false,
-			note: "blocked_fetch_full",
-		});
-		deny(
-			"ContextMind blocked context_fetch full=true",
-			"Use context_fetch with a line selector (start/end) or pattern. full=true is disabled unless fetch.allow_full is true in .contextmind.json.",
-		);
+// ─── context_fetch full=true (token leak) — CallMcpTool OR native MCP:context_fetch ───
+{
+	const isFetch =
+		(name === "callmcptool" && innerMcp.includes("context_fetch")) ||
+		name.includes("context_fetch");
+	if (isFetch) {
+		const innerArgs =
+			name === "callmcptool"
+				? (args.arguments ?? args.tool_input ?? {})
+				: args;
+		if (innerArgs?.full === true && cfg.fetch?.allow_full !== true) {
+			record({
+				surface: "mcp",
+				toolName: "context_fetch",
+				sessionId,
+				readBlocked: 1,
+				success: false,
+				note: "blocked_fetch_full",
+			});
+			deny(
+				"ContextMind blocked context_fetch full=true",
+				"Use context_fetch with a line selector (start/end) or pattern. full=true is disabled unless fetch.allow_full is true in .contextmind.json.",
+			);
+		}
 	}
 }
 
@@ -146,34 +154,56 @@ if (name === "callmcptool" && innerMcp.includes("context_")) {
 	}
 }
 
-// ─── context_orient (once-per-symbol telemetry) ───
-if (name === "callmcptool" && innerMcp.includes("context_orient")) {
-	const innerArgs = args.arguments ?? args.tool_input ?? {};
-	const q = String(innerArgs.query ?? innerArgs.symbol ?? "").slice(0, 200);
-	const refresh = innerArgs.refresh === true;
-	const okey = `orient:${q || "(empty)"}`;
-	const prev = q && !refresh ? rt.seen?.lookup(sessionId, "orient", okey) : null;
-	if (prev) {
+// ─── context_orient (once-per-symbol) — CallMcpTool OR native MCP:context_orient ───
+{
+	const isOrient =
+		(name === "callmcptool" && innerMcp.includes("context_orient")) ||
+		name.includes("context_orient");
+	if (isOrient) {
+		const innerArgs =
+			name === "callmcptool"
+				? (args.arguments ?? args.tool_input ?? {})
+				: args;
+		const rawQ = String(innerArgs.query ?? innerArgs.symbol ?? "").slice(0, 200);
+		const refresh = innerArgs.refresh === true;
+		let okey = "";
+		try {
+			const { orientSeenKey } = await lib("orient-key.mjs");
+			okey = orientSeenKey(rawQ);
+		} catch {
+			const norm = rawQ.trim().toLowerCase().replace(/\\/g, "/").replace(/\.java$/, "");
+			const base = norm.includes("/")
+				? norm.split("/").filter(Boolean).pop() || norm
+				: norm.includes(".")
+					? norm.split(".").filter(Boolean).pop() || norm
+					: norm;
+			okey = base ? `orient:${base}` : "";
+		}
+		const prev = okey && !refresh ? rt.seen?.lookup(sessionId, "orient", okey) : null;
+		if (prev) {
+			record({
+				surface: "mcp",
+				toolName: "context_orient",
+				sessionId,
+				success: false,
+				note: "orient_dup",
+				preventedReadTokens: cfg.cache_engine?.orientSkipTokensEstimate ?? 364,
+			});
+			const handleHint = prev.handle_id ? ` Prior handle=${prev.handle_id}.` : "";
+			deny(
+				"ContextMind blocked duplicate context_orient",
+				`Same symbol already oriented this session (${prev.hits}×, key=${okey}).${handleHint} Use context_fetch with a line selector. Pass refresh=true only if the graph changed.`,
+			);
+		}
+		if (okey) rt.seen?.touch(sessionId, "orient", okey);
 		record({
 			surface: "mcp",
 			toolName: "context_orient",
 			sessionId,
-			success: false,
-			note: "orient_dup",
+			success: true,
+			note: "orient_ok",
 		});
-		deny(
-			"ContextMind blocked duplicate context_orient",
-			`Same symbol already oriented this session (${prev.hits}×). Use context_fetch with a line selector. Pass refresh=true only if the graph changed.`,
-		);
 	}
-	if (q) rt.seen?.touch(sessionId, "orient", okey);
-	record({
-		surface: "mcp",
-		toolName: "context_orient",
-		sessionId,
-		success: true,
-		note: "orient_ok",
-	});
 }
 
 // ─── Write / StrReplace — optional TaskBundle gate for Java ───

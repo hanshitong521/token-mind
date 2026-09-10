@@ -1,0 +1,13 @@
+{
+  "id": "D08-dynamic-rag-early",
+  "file": "D08-dynamic-rag-early.json",
+  "category": "cache-killer",
+  "sourceType": "openai",
+  "provider": "openai",
+  "bytes": 379,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true
+  },
+  "secretValues": []
+}

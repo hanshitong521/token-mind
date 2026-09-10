@@ -1,0 +1,15 @@
+{
+  "id": "A11-resident-rules-overload",
+  "file": "A11-resident-rules-overload.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 6701,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": [
+      "Q10"
+    ]
+  },
+  "secretValues": []
+}

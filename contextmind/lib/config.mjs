@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import "./llm-profile.mjs";
 import { applyPeakCacheEngine } from "./cache-engine/peak-profile.mjs";
+import { applyShejiuDataPaths } from "./shejiu-data-root.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -96,7 +97,7 @@ export const DEFAULTS = {
 	},
 
 	budget: {
-		orient: 800,
+		orient: 700,
 		find: 1000,
 		get: 1600,
 		impact: 1200,
@@ -133,7 +134,17 @@ export const DEFAULTS = {
 			mysql_query: { max_tokens: 1400, preserve: ["columns", "row_count", "errors"], body: "handle" },
 			semantic_search: { max_tokens: 1400, preserve: ["paths", "scores"], body: "handle" },
 			get_evidence: { max_tokens: 1400, preserve: ["paths"], body: "handle" },
-			codegraph_explore: { max_tokens: 1600, preserve: ["paths", "symbols"], body: "count_as_read" },
+			codegraph_explore: { max_tokens: 1200, preserve: ["paths", "symbols"], body: "handle" },
+			search_project_context: {
+				max_tokens: 450,
+				preserve: ["project_id", "query", "count", "doc_count", "memories", "docs", "paths", "id", "title", "kind"],
+				body: "handle",
+			},
+			get_change_context: {
+				max_tokens: 450,
+				preserve: ["project_id", "file", "change_risk", "doc_count", "memories", "docs", "note", "id", "title", "kind"],
+				body: "handle",
+			},
 		},
 	},
 
@@ -152,12 +163,22 @@ export const DEFAULTS = {
 	adapters: {
 		codegraph: { enabled: true, probe_tools: true, servers: ["codegraph"], bin: "codegraph" },
 		mysql: { enabled: true, servers: ["ads-mysql"] },
+		/** 真实 serena（Python LSP MCP）可选 adapter，默认关闭；开启且装了 serena 时 context_outline engine=serena 委托。 */
+		serena: { enabled: false, bin: "serena" },
+	},
+
+	/** context_outline 守卫：极大文件先挡，返回侧 clamp，绝不让"看结构"撑爆窗口。 */
+	outline: {
+		enabled: true,
+		max_input_bytes: 1048576, // >1MiB 不整读
+		max_tokens: 1600, // 一次 outline 产物上限
+		max_symbols: 2000, // 扫描符号上限
 	},
 
 	/** Bounded fetch unless the caller opts into raw. Selector cannot exceed these. */
 	fetch: {
-		default_lines: 80,
-		max_tokens: 1200,
+		default_lines: 48,
+		max_tokens: 800,
 		allow_full: false,
 	},
 
@@ -189,7 +210,8 @@ export const DEFAULTS = {
 	cache: {
 		enabled: true,
 		backend: "auto",
-		ttl_sec: 600,
+		/** 4h — cover a work afternoon of repeat orients without re-spawning codegraph. */
+		ttl_sec: 14400,
 		mem_max: 256,
 		redis_url: "",
 	},
@@ -394,7 +416,7 @@ export function loadConfigFrom(userPath, projectDir) {
 		cfg.cache_engine = applyPeakCacheEngine(cfg.cache_engine);
 	}
 	if (!cfg.project_root) cfg.project_root = projectDir;
-	return cfg;
+	return applyShejiuDataPaths(cfg, projectDir);
 }
 
 export function loadConfig(projectDir = process.cwd()) {

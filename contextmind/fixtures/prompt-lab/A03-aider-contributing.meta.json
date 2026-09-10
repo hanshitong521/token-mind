@@ -1,0 +1,13 @@
+{
+  "id": "A03-aider-contributing",
+  "file": "A03-aider-contributing.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 7863,
+  "expect": {
+    "minBlocks": 1,
+    "real": true
+  },
+  "secretValues": []
+}

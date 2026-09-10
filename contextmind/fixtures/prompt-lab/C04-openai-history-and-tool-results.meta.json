@@ -1,0 +1,12 @@
+{
+  "id": "C04-openai-history-and-tool-results",
+  "file": "C04-openai-history-and-tool-results.json",
+  "category": "provider",
+  "sourceType": "openai",
+  "provider": "openai",
+  "bytes": 748,
+  "expect": {
+    "minBlocks": 4
+  },
+  "secretValues": []
+}

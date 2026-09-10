@@ -1,0 +1,50 @@
+{
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from disk.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "grep",
+      "description": "Search the repository for a literal or regex pattern.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "glob": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    },
+    {
+      "name": "run_tests",
+      "description": "Run the test suite and return the summary.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "string"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

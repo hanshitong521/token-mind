@@ -1,0 +1,14 @@
+{
+  "id": "E01-sql",
+  "file": "E01-sql.md",
+  "category": "dont-touch",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 178,
+  "expect": {
+    "minBlocks": 1,
+    "minDoNotTouch": 1,
+    "roundTrip": true
+  },
+  "secretValues": []
+}

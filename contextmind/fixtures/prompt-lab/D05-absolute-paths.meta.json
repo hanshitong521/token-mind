@@ -1,0 +1,14 @@
+{
+  "id": "D05-absolute-paths",
+  "file": "D05-absolute-paths.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 214,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "minNonStatic": 1
+  },
+  "secretValues": []
+}

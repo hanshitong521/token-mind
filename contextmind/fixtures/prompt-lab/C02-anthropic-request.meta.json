@@ -1,0 +1,12 @@
+{
+  "id": "C02-anthropic-request",
+  "file": "C02-anthropic-request.json",
+  "category": "provider",
+  "sourceType": "anthropic",
+  "provider": "anthropic",
+  "bytes": 960,
+  "expect": {
+    "minBlocks": 3
+  },
+  "secretValues": []
+}

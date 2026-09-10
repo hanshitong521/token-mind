@@ -1,0 +1,15 @@
+{
+  "id": "A10-duplicate-rule-blocks",
+  "file": "A10-duplicate-rule-blocks.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 278,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": [
+      "Q04-DUP-EXACT"
+    ]
+  },
+  "secretValues": []
+}

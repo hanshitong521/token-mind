@@ -1,0 +1,13 @@
+{
+  "id": "E05-user-request-original",
+  "file": "E05-user-request-original.md",
+  "category": "dont-touch",
+  "sourceType": "user_prompt",
+  "provider": "generic",
+  "bytes": 155,
+  "expect": {
+    "minBlocks": 1,
+    "allDoNotTouch": true
+  },
+  "secretValues": []
+}

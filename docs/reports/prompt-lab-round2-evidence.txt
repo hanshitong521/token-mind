@@ -1,0 +1,47 @@
+PROMPT_LAB_ROUND2_EVIDENCE v1
+generated_at=2026-09-09T04:30:19.496Z
+node=v22.22.2
+fixture_count=41
+prompt_lab_engine=1.0.0
+
+MODE_MATRIX
+  modeA_ops=0
+  modeA_manifest_unchanged=true
+  modeB_delete_occurrence=1 (never the surviving copy)
+  modeB_blocks_2_to_1=true
+  modeC_pendingEval=0 modeC_ops=1
+  modeD_ops=0 (no compressor adapter in static core)
+  modeD_status=EXPERIMENTAL_UNAVAILABLE
+
+INSTANCE_ADDRESSING
+  a10_shared_content_id=true
+  a10_delete_occ1_keeps_first=true (round-1 bug deleted both)
+
+OPTIMIZER_SWEEP_SAFE
+  verify_ok_fixtures=41/41
+  plaintext_secret_leaks_in_optimized_output=0
+  dnt_blocks_checked=66
+  recommendation_safe_apply=2 recommendation_analyze_only=39
+  total_delta_tokens=-35
+
+SCHEMA_DUP_SUGGESTION
+  schema_dup_suggested=true
+  schema_dup_auto_applied=false
+  schema_blocks_untouched=true
+
+CORE_REGRESSIONS
+  dnt_sql_zero_ops=true (protection via block.mutability, not regex)
+  input_manifest_not_mutated=true
+  delete_reverse_from_ops=false (restore uses P6 original snapshot)
+  p6_bundle_complete=true
+
+PATCH_GUARD
+  stale_patch_refused=true
+
+PERF
+  fixture=A01-promptfoo-agents bytes=22452
+  deterministic_optimize_ms=106.48
+  blocks_before=39 blocks_after=39 rules_ok=true
+
+TEST_SUITE
+  pass 117 fail 0

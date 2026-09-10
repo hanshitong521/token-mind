@@ -1,0 +1,106 @@
+== BUILTIN_EVAL ==
+  eval_full_regression_ok=true
+  eval_status=PASS
+  eval_provider=builtin
+  eval_cases_dataset3_fixtures41=44
+  eval_all_cases_pass=true
+  eval_fixture_regression_zero=true
+  eval_critical_assertions=PASS
+  eval_dataset=builtin-1
+  eval_assertion_pass_rate=1
+  eval_negative_controls=3
+  eval_negative_all_detected=3/3
+  eval_llm_metric_task=not_measured
+  eval_llm_metric_hallucination=not_measured
+  eval_llm_metric_latency_cost=not_measured
+  eval_llm_metric_tool_cache=not_measured
+  eval_prompt_tokens_before=13371
+  eval_prompt_tokens_after=13361
+  eval_modeB_tokens_not_increased=true
+  eval_tool_schema_tokens=924
+  eval_stable_prefix_ratio_avg=0.63
+  eval_stable_prefix_tokens_avg=204.5
+  eval_dataset_stable=true
+  eval_single_case_pass=true
+  eval_single_fixture_sql_pass=true
+  eval_fixture_meta_count=41
+  eval_custom_content_asserts=true
+
+== EVAL_DB_PERSIST ==
+  eval_schema_tables=3/3
+  eval_schema_total_tables=11/11
+  eval_run_persisted=true
+  eval_run_summary_pass=true
+  eval_full_regression_persisted=true
+  telemetry_eval_run_count>=2
+  telemetry_eval_regression_zero=true
+  eval_runs_list_queryable=true
+  eval_runs_row_allPassed=true
+  eval_latest_evidence_allPassed=true
+  eval_latest_evidence_negatives=true
+  eval_latest_evidence_assertions=true
+  eval_runs_total=2
+
+== GATE_THREAD ==
+  gate_critical_assertions_unknown_before_eval=true
+  gate_closed_without_eval=true
+  gate_critical_assertions_pass_after_eval=true
+  gate_checks=rule_execution_complete=PASS,critical_assertions_pass=PASS,safety_regression_zero=PASS,quality_after_ge_before=UNKNOWN,cache_stability_not_decreased=UNKNOWN,token_not_increased=UNKNOWN
+
+== MODE_C_SEMANTIC ==
+  semantic_candidates_found=1
+  candidate_SEM-4a00d33f-ffc0d94e_risk=SEMANTIC_REWRITE
+  candidate_SEM-4a00d33f-ffc0d94e_op=MERGE_BLOCKS
+  candidate_SEM-4a00d33f-ffc0d94e_tokenDelta_negative=-15
+  merge_similarity_floor_conservative=true
+  merge_texts_line_union=true
+  exact_duplicates_not_semantic_candidates=true
+  route_optimize_mode_C=true
+  mode_c_pending_eval=1
+  mode_c_candidates_require_eval=true
+  pending_semantic_patch_rows=1
+  p10_blocks_without_eval=true
+  mode_c_eval_evidence_pass=true
+  semantic_confirm_ok=true
+  semantic_confirm_risk=SEMANTIC_REWRITE
+  semantic_confirm_child_version=true
+  semantic_confirm_merged_blocks=3->2
+  telemetry_semantic_patch>=1
+  semantic_confirm_undo_ok=true
+  semantic_undo_restores_block_count=true
+  telemetry_patch_reverse=1
+
+== STEP11_EXPORT ==
+  export_agents_filename=AGENTS.md
+  export_agents_header=true
+  export_agents_body_intact=true
+  export_claude_filename=CLAUDE.md
+  export_claude_header=true
+  export_claude_body_intact=true
+  export_rules_filename=.cursor/rules/prompt-lab.mdc
+  export_rules_header=true
+  export_rules_body_intact=true
+  export_skill_filename=SKILL.md
+  export_skill_header=true
+  export_skill_body_intact=true
+  export_unknown_target_rejected=true
+  export_openai_json=true
+  export_anthropic_json=true
+  export_markdown_legacy_intact=true
+
+== LAB_INFO ==
+  lab_info_ok=true
+  lab_info_eval_provider=builtin
+  lab_info_promptfoo=NOT_INSTALLED
+  lab_info_modes=ABCD
+  lab_info_eval_run_counters=true
+
+== HTTP_E2E ==
+  http_page_has_eval_tab=true
+  http_evaluate_builtin_pass=true
+  http_lab_info_states=true
+  http_mode_c_pending_eval=true
+  http_p10_blocked_without_eval=true
+  http_eval_over_mode_c_input_pass=true
+  http_semantic_confirm_after_eval=true
+  http_export_skill_target=true

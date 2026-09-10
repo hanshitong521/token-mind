@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contextmind/task-bundle/v2",
+  "title": "ContextMind TaskBundle v2",
+  "type": "object",
+  "required": ["schema_version", "task_id", "intent", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 2 },
+    "task_id": { "type": "string", "maxLength": 120 },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "session_id": { "type": "string", "maxLength": 120 }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "spec": { "type": "object" },
+    "plan": { "type": "object" },
+    "eval": { "type": "object" },
+    "meta": { "type": "object" }
+  }
+}

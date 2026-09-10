@@ -1,0 +1,14 @@
+{
+  "id": "D03-request-ids",
+  "file": "D03-request-ids.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 213,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "minNonStatic": 1
+  },
+  "secretValues": []
+}

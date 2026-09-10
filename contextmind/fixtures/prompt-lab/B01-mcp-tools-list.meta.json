@@ -1,0 +1,15 @@
+{
+  "id": "B01-mcp-tools-list",
+  "file": "B01-mcp-tools-list.json",
+  "category": "tool-mcp",
+  "sourceType": "tools",
+  "provider": "generic",
+  "bytes": 989,
+  "expect": {
+    "minBlocks": 3,
+    "kinds": [
+      "tool_schema"
+    ]
+  },
+  "secretValues": []
+}

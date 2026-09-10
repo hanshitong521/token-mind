@@ -13,7 +13,7 @@
  */
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { evaluatePathScope } from "./task-bundle.mjs";
 import { FORBIDDEN_SCAN_HINT, forbiddenAgentScanPath } from "./path-guards.mjs";
 
@@ -98,7 +98,14 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 		};
 	}
 
-	const stat = statFile(filePath);
+	// Relative paths must resolve against project root — otherwise stat fails and we
+	// fail-open ("unreadable"), which silently lets whole ServiceImpl files through.
+	let resolved = String(filePath ?? "");
+	if (resolved && projectRoot && !isAbsolute(resolved)) {
+		resolved = resolve(projectRoot, resolved);
+	}
+
+	const stat = statFile(resolved);
 	if (!stat || !stat.isFile) {
 		// Unknown or missing: not ours to block. Failing closed on a path we
 		// cannot stat would break legitimate creation workflows.
@@ -106,7 +113,7 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 	}
 
 	const fileTokens = estimateFullReadTokens(stat.size);
-	const name = basename(filePath);
+	const name = basename(resolved);
 
 	// Escape hatches first: an explicit override is a decision, not a bypass,
 	// and it is counted so a rule that misfires shows up in telemetry.
@@ -119,6 +126,12 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 			preventedTokens: 0,
 			fileTokens,
 		};
+	}
+
+	// Bounded range is the approved way to read large Java — check before TaskBundle
+	// so offset+limit is never blocked as "outside allow_globs".
+	if (bounded) {
+		return { decision: "allow", rule: "bounded_range", reason: "explicit offset/limit", preventedTokens: 0, fileTokens };
 	}
 
 	if (taskBundle && projectRoot) {
@@ -138,10 +151,6 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 				message: `ContextMind TaskBundle: ${scope.reason}\n${DENY_NEXT_STEP}`,
 			};
 		}
-	}
-
-	if (bounded) {
-		return { decision: "allow", rule: "bounded_range", reason: "explicit offset/limit", preventedTokens: 0, fileTokens };
 	}
 
 	const denied = (rule, reason) => ({
@@ -170,7 +179,7 @@ export function evaluateRead({ filePath, offset, limit, cfg, prompt = "", toolIn
 	}
 
 	if (JAVA.test(name)) {
-		const sample = lineSample(filePath);
+		const sample = lineSample(resolved);
 		const threshold = JAVA_SERVICE.test(name)
 			? cfgRead.java_service_unbounded_lines
 			: MAPPER_JAVA.test(name)

@@ -1,0 +1,16 @@
+{
+  "id": "A08-vague-goal",
+  "file": "A08-vague-goal.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 263,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": [
+      "Q01",
+      "Q02"
+    ]
+  },
+  "secretValues": []
+}

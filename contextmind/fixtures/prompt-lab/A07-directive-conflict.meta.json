@@ -1,0 +1,15 @@
+{
+  "id": "A07-directive-conflict",
+  "file": "A07-directive-conflict.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 171,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": [
+      "Q03-CONFLICT"
+    ]
+  },
+  "secretValues": []
+}

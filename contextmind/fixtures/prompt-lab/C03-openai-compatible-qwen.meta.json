@@ -1,0 +1,12 @@
+{
+  "id": "C03-openai-compatible-qwen",
+  "file": "C03-openai-compatible-qwen.json",
+  "category": "provider",
+  "sourceType": "openai",
+  "provider": "qwen",
+  "bytes": 311,
+  "expect": {
+    "minBlocks": 2
+  },
+  "secretValues": []
+}

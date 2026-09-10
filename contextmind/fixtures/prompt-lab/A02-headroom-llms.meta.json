@@ -1,0 +1,13 @@
+{
+  "id": "A02-headroom-llms",
+  "file": "A02-headroom-llms.txt",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 5406,
+  "expect": {
+    "minBlocks": 1,
+    "real": true
+  },
+  "secretValues": []
+}

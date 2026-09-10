@@ -1,0 +1,66 @@
+# Rules
+
+- Rule 1: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 2: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 3: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 4: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 5: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 6: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 7: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 8: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 9: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 10: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 11: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 12: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 13: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 14: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 15: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 16: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 17: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 18: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 19: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 20: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 21: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 22: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 23: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 24: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 25: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 26: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 27: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 28: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 29: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 30: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 31: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 32: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 33: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 34: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 35: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 36: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 37: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 38: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 39: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 40: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 41: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 42: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 43: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 44: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 45: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 46: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 47: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 48: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 49: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 50: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 51: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 52: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 53: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 54: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 55: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 56: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 57: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 58: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 59: verify the deterministic ordering of every tool schema before the current user request is appended.
+- Rule 60: verify the deterministic ordering of every tool schema before the current user request is appended.
+
+# Small Section
+
+- Keep output concise.

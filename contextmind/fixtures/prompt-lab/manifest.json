@@ -1,0 +1,594 @@
+{
+  "count": 41,
+  "fixtures": [
+    {
+      "id": "A01-promptfoo-agents",
+      "file": "A01-promptfoo-agents.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 22452,
+      "expect": {
+        "minBlocks": 1,
+        "real": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A02-headroom-llms",
+      "file": "A02-headroom-llms.txt",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 5406,
+      "expect": {
+        "minBlocks": 1,
+        "real": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A03-aider-contributing",
+      "file": "A03-aider-contributing.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 7863,
+      "expect": {
+        "minBlocks": 1,
+        "real": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A04-cursor-rules",
+      "file": "A04-cursor-rules.mdc",
+      "category": "agent-instruction",
+      "sourceType": "cursor_rules",
+      "provider": "cursor",
+      "bytes": 408,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": []
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A05-skill-md",
+      "file": "A05-skill-md.md",
+      "category": "agent-instruction",
+      "sourceType": "skill_md",
+      "provider": "generic",
+      "bytes": 440,
+      "expect": {
+        "minBlocks": 3
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A06-stable-core-prompt",
+      "file": "A06-stable-core-prompt.md",
+      "category": "agent-instruction",
+      "sourceType": "system_prompt",
+      "provider": "openai",
+      "bytes": 421,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "allStableExceptUser": true,
+        "cacheBreakerMax": 0
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A07-directive-conflict",
+      "file": "A07-directive-conflict.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 171,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": [
+          "Q03-CONFLICT"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A08-vague-goal",
+      "file": "A08-vague-goal.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 263,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": [
+          "Q01",
+          "Q02"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A09-persona-and-negation",
+      "file": "A09-persona-and-negation.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 225,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": [
+          "Q05",
+          "Q11"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A10-duplicate-rule-blocks",
+      "file": "A10-duplicate-rule-blocks.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 278,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": [
+          "Q04-DUP-EXACT"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "A11-resident-rules-overload",
+      "file": "A11-resident-rules-overload.md",
+      "category": "agent-instruction",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 6701,
+      "expect": {
+        "minBlocks": 2,
+        "ruleIds": [
+          "Q10"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B01-mcp-tools-list",
+      "file": "B01-mcp-tools-list.json",
+      "category": "tool-mcp",
+      "sourceType": "tools",
+      "provider": "generic",
+      "bytes": 989,
+      "expect": {
+        "minBlocks": 3,
+        "kinds": [
+          "tool_schema"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B02-duplicate-tool-schema",
+      "file": "B02-duplicate-tool-schema.json",
+      "category": "tool-mcp",
+      "sourceType": "tools",
+      "provider": "generic",
+      "bytes": 1002,
+      "expect": {
+        "minBlocks": 3,
+        "ruleIds": [
+          "Q12-SCHEMA-DUP",
+          "CACHE-004"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B03-tools-order-swapped",
+      "file": "B03-tools-order-swapped.json",
+      "category": "tool-mcp",
+      "sourceType": "tools",
+      "provider": "generic",
+      "bytes": 989,
+      "expect": {
+        "minBlocks": 3,
+        "fingerprintDiffFrom": "B01-mcp-tools-list",
+        "fingerprintSameSegments": [
+          "system",
+          "rules"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B05-huge-tool-description",
+      "file": "B05-huge-tool-description.json",
+      "category": "tool-mcp",
+      "sourceType": "tools",
+      "provider": "generic",
+      "bytes": 1131,
+      "expect": {
+        "minBlocks": 1,
+        "minTokens": 200
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B06-dynamic-tool-description",
+      "file": "B06-dynamic-tool-description.json",
+      "category": "tool-mcp",
+      "sourceType": "tools",
+      "provider": "generic",
+      "bytes": 368,
+      "expect": {
+        "minBlocks": 1,
+        "noStaticVolatile": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "B07-inline-schema-duplicate",
+      "file": "B07-inline-schema-duplicate.md",
+      "category": "tool-mcp",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 422,
+      "expect": {
+        "minBlocks": 1,
+        "ruleIds": [
+          "Q12-SCHEMA-DUP"
+        ]
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C01-openai-messages",
+      "file": "C01-openai-messages.json",
+      "category": "provider",
+      "sourceType": "openai",
+      "provider": "openai",
+      "bytes": 429,
+      "expect": {
+        "minBlocks": 3
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C02-anthropic-request",
+      "file": "C02-anthropic-request.json",
+      "category": "provider",
+      "sourceType": "anthropic",
+      "provider": "anthropic",
+      "bytes": 960,
+      "expect": {
+        "minBlocks": 3
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C03-openai-compatible-qwen",
+      "file": "C03-openai-compatible-qwen.json",
+      "category": "provider",
+      "sourceType": "openai",
+      "provider": "qwen",
+      "bytes": 311,
+      "expect": {
+        "minBlocks": 2
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C04-openai-history-and-tool-results",
+      "file": "C04-openai-history-and-tool-results.json",
+      "category": "provider",
+      "sourceType": "openai",
+      "provider": "openai",
+      "bytes": 748,
+      "expect": {
+        "minBlocks": 4
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C05-anthropic-tool-use",
+      "file": "C05-anthropic-tool-use.json",
+      "category": "provider",
+      "sourceType": "anthropic",
+      "provider": "anthropic",
+      "bytes": 929,
+      "expect": {
+        "minBlocks": 3
+      },
+      "secretValues": []
+    },
+    {
+      "id": "C06-local-qwen-agent",
+      "file": "C06-local-qwen-agent.json",
+      "category": "provider",
+      "sourceType": "openai",
+      "provider": "qwen",
+      "bytes": 306,
+      "expect": {
+        "minBlocks": 2
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D01-timestamp-prefix",
+      "file": "D01-timestamp-prefix.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 192,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D02-uuid-session",
+      "file": "D02-uuid-session.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 203,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D03-request-ids",
+      "file": "D03-request-ids.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 213,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D04-git-commit-branch",
+      "file": "D04-git-commit-branch.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 221,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D05-absolute-paths",
+      "file": "D05-absolute-paths.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 214,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D06-epoch-and-hash",
+      "file": "D06-epoch-and-hash.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 260,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "minNonStatic": 1
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D07-dynamic-memory-early",
+      "file": "D07-dynamic-memory-early.json",
+      "category": "cache-killer",
+      "sourceType": "openai",
+      "provider": "openai",
+      "bytes": 396,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "firstDynamicIsFirstBlock": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D08-dynamic-rag-early",
+      "file": "D08-dynamic-rag-early.json",
+      "category": "cache-killer",
+      "sourceType": "openai",
+      "provider": "openai",
+      "bytes": 379,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "D09-stable-baseline",
+      "file": "D09-stable-baseline.md",
+      "category": "cache-killer",
+      "sourceType": "markdown",
+      "provider": "cursor",
+      "bytes": 251,
+      "expect": {
+        "minBlocks": 3,
+        "noStaticVolatile": true,
+        "allStableExceptUser": true,
+        "cacheBreakerMax": 0
+      },
+      "secretValues": []
+    },
+    {
+      "id": "E01-sql",
+      "file": "E01-sql.md",
+      "category": "dont-touch",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 178,
+      "expect": {
+        "minBlocks": 1,
+        "minDoNotTouch": 1,
+        "roundTrip": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "E02-json-schema",
+      "file": "E02-json-schema.md",
+      "category": "dont-touch",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 233,
+      "expect": {
+        "minBlocks": 1,
+        "minDoNotTouch": 1,
+        "roundTrip": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "E03-code-diff",
+      "file": "E03-code-diff.md",
+      "category": "dont-touch",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 322,
+      "expect": {
+        "minBlocks": 1,
+        "minDoNotTouch": 1,
+        "roundTrip": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "E04-acceptance-and-danger",
+      "file": "E04-acceptance-and-danger.md",
+      "category": "dont-touch",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 231,
+      "expect": {
+        "minBlocks": 2,
+        "allDoNotTouch": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "E05-user-request-original",
+      "file": "E05-user-request-original.md",
+      "category": "dont-touch",
+      "sourceType": "user_prompt",
+      "provider": "generic",
+      "bytes": 155,
+      "expect": {
+        "minBlocks": 1,
+        "allDoNotTouch": true
+      },
+      "secretValues": []
+    },
+    {
+      "id": "F01-api-keys",
+      "file": "F01-api-keys.md",
+      "category": "security",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 208,
+      "expect": {
+        "minBlocks": 1,
+        "secrets": true,
+        "secretKinds": [
+          "api_key"
+        ]
+      },
+      "secretValues": [
+        "sk-proj-9Xt2Lm4Qp7Rs8Tu1Vw2Xy3Z4a5B6c7D8e9F0g1H2i3J4k5L6m7N8o9P0",
+        "sk-ant-api03-AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789"
+      ]
+    },
+    {
+      "id": "F02-bearer-and-cookie",
+      "file": "F02-bearer-and-cookie.md",
+      "category": "security",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 193,
+      "expect": {
+        "minBlocks": 1,
+        "secrets": true,
+        "secretKinds": [
+          "bearer_token",
+          "cookie"
+        ]
+      },
+      "secretValues": [
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+        "8f14e45fceea167a5a36dedd4bea2543"
+      ]
+    },
+    {
+      "id": "F03-password-and-private-key",
+      "file": "F03-password-and-private-key.md",
+      "category": "security",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 184,
+      "expect": {
+        "minBlocks": 1,
+        "secrets": true,
+        "secretKinds": [
+          "password",
+          "private_key"
+        ]
+      },
+      "secretValues": [
+        "Sup3rS3cretValue"
+      ]
+    },
+    {
+      "id": "F04-access-token-and-db-url",
+      "file": "F04-access-token-and-db-url.md",
+      "category": "security",
+      "sourceType": "markdown",
+      "provider": "generic",
+      "bytes": 147,
+      "expect": {
+        "minBlocks": 1,
+        "secrets": true,
+        "secretKinds": [
+          "access_token",
+          "database_url"
+        ]
+      },
+      "secretValues": [
+        "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+        "ExamplePass123"
+      ]
+    }
+  ]
+}

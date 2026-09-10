@@ -1,0 +1,13 @@
+{
+  "model": "qwen2.5-coder-32b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "本地 Qwen 模型，请严格使用中文回复，代码注释保持中文。"
+    },
+    {
+      "role": "user",
+      "content": "把这段 MyBatis XML 改成批量插入，并给出验证步骤。"
+    }
+  ]
+}

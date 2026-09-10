@@ -1,0 +1,15 @@
+{
+  "id": "A06-stable-core-prompt",
+  "file": "A06-stable-core-prompt.md",
+  "category": "agent-instruction",
+  "sourceType": "system_prompt",
+  "provider": "openai",
+  "bytes": 421,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "allStableExceptUser": true,
+    "cacheBreakerMax": 0
+  },
+  "secretValues": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "D01-timestamp-prefix",
+  "file": "D01-timestamp-prefix.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 192,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "minNonStatic": 1
+  },
+  "secretValues": []
+}

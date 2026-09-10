@@ -1,0 +1,14 @@
+{
+  "id": "D06-epoch-and-hash",
+  "file": "D06-epoch-and-hash.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 260,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "minNonStatic": 1
+  },
+  "secretValues": []
+}

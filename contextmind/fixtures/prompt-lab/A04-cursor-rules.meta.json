@@ -1,0 +1,13 @@
+{
+  "id": "A04-cursor-rules",
+  "file": "A04-cursor-rules.mdc",
+  "category": "agent-instruction",
+  "sourceType": "cursor_rules",
+  "provider": "cursor",
+  "bytes": 408,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": []
+  },
+  "secretValues": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "D09-stable-baseline",
+  "file": "D09-stable-baseline.md",
+  "category": "cache-killer",
+  "sourceType": "markdown",
+  "provider": "cursor",
+  "bytes": 251,
+  "expect": {
+    "minBlocks": 3,
+    "noStaticVolatile": true,
+    "allStableExceptUser": true,
+    "cacheBreakerMax": 0
+  },
+  "secretValues": []
+}

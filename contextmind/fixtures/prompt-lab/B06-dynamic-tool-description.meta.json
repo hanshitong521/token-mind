@@ -1,0 +1,13 @@
+{
+  "id": "B06-dynamic-tool-description",
+  "file": "B06-dynamic-tool-description.json",
+  "category": "tool-mcp",
+  "sourceType": "tools",
+  "provider": "generic",
+  "bytes": 368,
+  "expect": {
+    "minBlocks": 1,
+    "noStaticVolatile": true
+  },
+  "secretValues": []
+}

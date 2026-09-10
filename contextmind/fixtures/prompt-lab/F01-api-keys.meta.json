@@ -1,0 +1,19 @@
+{
+  "id": "F01-api-keys",
+  "file": "F01-api-keys.md",
+  "category": "security",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 208,
+  "expect": {
+    "minBlocks": 1,
+    "secrets": true,
+    "secretKinds": [
+      "api_key"
+    ]
+  },
+  "secretValues": [
+    "sk-proj-9Xt2Lm4Qp7Rs8Tu1Vw2Xy3Z4a5B6c7D8e9F0g1H2i3J4k5L6m7N8o9P0",
+    "sk-ant-api03-AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789"
+  ]
+}

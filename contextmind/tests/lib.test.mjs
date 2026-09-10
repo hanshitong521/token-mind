@@ -354,6 +354,30 @@ describe("read guard", () => {
 	it("estimates prevented tokens from the bytes that would have been read", () => {
 		assert.equal(estimateFullReadTokens(4000), 1000);
 	});
+
+	it("resolves relative ServiceImpl paths against projectRoot (no fail-open)", () => {
+		const root = mkdtempSync(join(tmpdir(), "cm-rg-"));
+		const rel = join("svc", "FooServiceImpl.java");
+		mkdirSync(join(root, "svc"), { recursive: true });
+		writeFileSync(join(root, rel), `class FooServiceImpl {\n${"  void m() {}\n".repeat(100)}}`);
+		const miss = evaluateRead({ filePath: rel, cfg: cfgFor() });
+		assert.equal(miss.rule, "unreadable");
+		const hit = evaluateRead({ filePath: rel, cfg: cfgFor(), projectRoot: root });
+		assert.equal(hit.decision, "deny");
+		assert.equal(hit.rule, "java_service");
+		rmSync(root, { recursive: true, force: true });
+	});
+});
+
+describe("orient-key", () => {
+	it("collapses FQCN / path / short name / ServiceImpl to one key", async () => {
+		const { normalizeOrientQuery, orientSeenKey } = await import("../lib/orient-key.mjs");
+		assert.equal(normalizeOrientQuery("com.shejiu.product.service.impl.TRedPacketTaskServiceImpl"), "tredpackettask");
+		assert.equal(normalizeOrientQuery("TRedPacketTaskServiceImpl"), "tredpackettask");
+		assert.equal(normalizeOrientQuery("TRedPacketTaskService"), "tredpackettask");
+		assert.equal(normalizeOrientQuery("a/b/TRedPacketTaskServiceImpl.java"), "tredpackettask");
+		assert.equal(orientSeenKey("com.foo.BarServiceImpl"), orientSeenKey("Bar"));
+	});
 });
 
 describe("mcp guard", () => {
@@ -378,6 +402,8 @@ describe("mcp guard", () => {
 	it("uses the tool profile when one matches", () => {
 		assert.equal(profileFor(cfg, "mysql_query").max_tokens, 1400);
 		assert.equal(profileFor(cfg, "unknown_tool").name, "generic");
+		assert.equal(profileFor(cfg, "search_project_context").max_tokens, 450);
+		assert.equal(profileFor(cfg, "get_change_context").max_tokens, 450);
 	});
 
 	it("never governs codegraph explore", () => {

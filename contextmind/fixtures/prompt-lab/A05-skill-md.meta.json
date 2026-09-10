@@ -1,0 +1,12 @@
+{
+  "id": "A05-skill-md",
+  "file": "A05-skill-md.md",
+  "category": "agent-instruction",
+  "sourceType": "skill_md",
+  "provider": "generic",
+  "bytes": 440,
+  "expect": {
+    "minBlocks": 3
+  },
+  "secretValues": []
+}

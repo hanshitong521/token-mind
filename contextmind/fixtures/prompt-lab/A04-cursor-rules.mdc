@@ -1,0 +1,15 @@
+---
+description: Repo conventions for the Java service layer
+globs: ["src/main/java/**/*.java"]
+alwaysApply: true
+---
+
+# Rules
+
+- Every public service method must declare its transaction boundary.
+- Never catch Exception without rethrowing or logging the cause.
+- Constructor injection only; field injection is not allowed.
+
+# Project
+
+Spring Boot with MyBatis. Mapper XML lives beside the mapper interface.

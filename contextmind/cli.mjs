@@ -35,6 +35,7 @@ import {
 	isOwnHook,
 	launcherFor,
 } from "./lib/install-plan.mjs";
+import { FORBIDDEN_STANDING_UPSTREAMS } from "./lib/upstreams-lock.mjs";
 import { engineStatus } from "./lib/engine.mjs";
 import { openHandles } from "./lib/handles.mjs";
 import { defaultDbPath as defaultTelemetryPath, formatSummary, openTelemetry } from "./lib/telemetry.mjs";
@@ -43,6 +44,9 @@ import { countTokens, TOKENIZER_ID } from "./lib/tokens.mjs";
 import { runOutputGate } from "./lib/output-gate.mjs";
 import { Dedup } from "./lib/dedup.mjs";
 import { classify } from "./lib/classify.mjs";
+import { validateActiveTaskBundle } from "./lib/task-bundle.mjs";
+import { projectScorecardView } from "./lib/stack-scorecard.mjs";
+import { initAgentStateScaffold, syncAgentStateFromTaskBundle } from "./lib/agent-state.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOKS_SRC = join(REPO_ROOT, "cursor", "hooks");
@@ -177,11 +181,22 @@ function install(projectRoot, flags = {}) {
 	backupOnce(mcpJson, ".contextmind-mcp-backup");
 	const mcp = readJson(mcpJson, { mcpServers: {} }) ?? { mcpServers: {} };
 	if (!mcp.mcpServers || typeof mcp.mcpServers !== "object") mcp.mcpServers = {};
+	const cmEnv = { CONTEXTMIND_PROJECT_DIR: resolve(projectRoot) };
+	const projCfg = readJson(join(projectRoot, ".contextmind.json"));
+	if (projCfg?.cache_engine?.kvUrl) {
+		cmEnv.CONTEXTMIND_KV_BRIDGE_URL = String(projCfg.cache_engine.kvUrl);
+	}
+	const prevEnv = mcp.mcpServers?.contextmind?.env;
+	if (prevEnv && typeof prevEnv === "object") {
+		for (const [k, v] of Object.entries(prevEnv)) {
+			if (v != null && cmEnv[k] === undefined) cmEnv[k] = v;
+		}
+	}
 	mcp.mcpServers.contextmind = {
 		type: "stdio",
 		command: process.execPath,
 		args: [join(cursorDir, "contextmind", "mcp-server.mjs")],
-		env: { CONTEXTMIND_PROJECT_DIR: resolve(projectRoot) },
+		env: cmEnv,
 	};
 	writeJson(mcpJson, mcp);
 
@@ -399,6 +414,13 @@ function doctor(projectRoot) {
 			if (!script || !existsSync(script)) {
 				return { status: "FAIL", detail: `server script missing: ${script}` };
 			}
+			const forbidden = servers.filter((s) => FORBIDDEN_STANDING_UPSTREAMS.has(s));
+			if (forbidden.length > 0) {
+				return {
+					status: "FAIL",
+					detail: `standing forbidden MCP (schema tax): ${forbidden.join(", ")} — merge --remove or use CLI`,
+				};
+			}
 			const upstreams = servers.filter((s) => s !== "contextmind");
 			// Spec 5.5: during the S1-S3 transition upstreams may coexist, but
 			// doctor must report the schema tax instead of staying quiet.
@@ -613,6 +635,65 @@ function benchmark(projectRoot, args) {
 	return 0;
 }
 
+// ─── task / scorecard / state (peak stack) ───
+
+function taskCmd(projectRoot, positional) {
+	const sub = positional[1] ?? "validate";
+	const cfg = loadConfig(projectRoot);
+	if (sub === "validate") {
+		const v = validateActiveTaskBundle(projectRoot, cfg);
+		if (!v.ok) {
+			console.error(`task validate FAIL: ${v.error} (${v.path ?? ""})`);
+			return 1;
+		}
+		console.log(`task validate: OK (${v.path})`);
+		return 0;
+	}
+	console.error(`unknown task subcommand: ${sub}`);
+	return 1;
+}
+
+function scorecardCmd(projectRoot, flags) {
+	const cfg = loadConfig(projectRoot);
+	const telemetry = openTelemetry(cfg);
+	try {
+		const view = projectScorecardView(projectRoot, cfg, telemetry, {});
+		if (flags.json) {
+			console.log(JSON.stringify(view, null, 2));
+			return 0;
+		}
+		console.log(JSON.stringify(view?.scorecard ?? view, null, 2));
+		return 0;
+	} finally {
+		telemetry.close();
+	}
+}
+
+function stateCmd(projectRoot, positional) {
+	const sub = positional[1] ?? "sync";
+	const cfg = loadConfig(projectRoot);
+	if (sub === "sync") {
+		initAgentStateScaffold(projectRoot);
+		const r = syncAgentStateFromTaskBundle(projectRoot, cfg);
+		if (!r.ok) {
+			console.error(`state sync FAIL: ${r.reason}`);
+			return 1;
+		}
+		console.log("state sync: OK");
+		return 0;
+	}
+	console.error(`unknown state subcommand: ${sub}`);
+	return 1;
+}
+
+function resolveProjectRoot(command, positional, flags) {
+	if (flags.dir) return resolve(flags.dir);
+	if (["install", "uninstall", "doctor", "status", "dashboard"].includes(command) && positional[1]) {
+		return resolve(positional[1]);
+	}
+	return resolve(process.cwd());
+}
+
 // ─── dispatch ───
 
 function parseArgs(argv) {
@@ -644,13 +725,16 @@ const USAGE = `ContextMind CLI
   contextmind fetch <handle> [--lines a-b] [--pattern re] [--jsonPath p] [--offset n]
   contextmind config [--validate]
   contextmind benchmark [--fixtures DIR]
+  contextmind task validate [dir]     Validate .contextmind/task.active.json
+  contextmind scorecard [--json]      Stack health scorecard
+  contextmind state sync [dir]        Sync .agent/state from TaskBundle
 
 No \`start\` / \`stop\`: there is no daemon in this slice.`;
 
 export function main(argv = process.argv.slice(2)) {
 	const { positional, flags } = parseArgs(argv);
 	const command = positional[0] ?? "help";
-	const projectRoot = resolve(positional[1] ?? flags.dir ?? process.cwd());
+	const projectRoot = resolveProjectRoot(command, positional, flags);
 
 	switch (command) {
 		case "install":
@@ -675,6 +759,12 @@ export function main(argv = process.argv.slice(2)) {
 			return configCmd(projectRoot, flags);
 		case "benchmark":
 			return benchmark(projectRoot, flags);
+		case "task":
+			return taskCmd(projectRoot, positional);
+		case "scorecard":
+			return scorecardCmd(projectRoot, flags);
+		case "state":
+			return stateCmd(projectRoot, positional);
 		case "dashboard":
 			// Read-only view over telemetry (owner-approved 2C exception).
 			// spawn + inherit stdio: Ctrl+C stops both; exit code propagates.

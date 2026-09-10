@@ -1,0 +1,13 @@
+{
+  "id": "E04-acceptance-and-danger",
+  "file": "E04-acceptance-and-danger.md",
+  "category": "dont-touch",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 231,
+  "expect": {
+    "minBlocks": 2,
+    "allDoNotTouch": true
+  },
+  "secretValues": []
+}

@@ -1,0 +1,17 @@
+{
+  "model": "gpt-5-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Memory retrieved at 2026-09-09T10:32:20Z: the team prefers constructor injection; last incident was a connection pool leak."
+    },
+    {
+      "role": "system",
+      "content": "You are a careful coding assistant."
+    },
+    {
+      "role": "user",
+      "content": "Refactor OrderService."
+    }
+  ]
+}

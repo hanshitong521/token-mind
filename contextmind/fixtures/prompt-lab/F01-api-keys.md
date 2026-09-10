@@ -1,0 +1,6 @@
+# Environment
+
+OPENAI_API_KEY=sk-proj-9Xt2Lm4Qp7Rs8Tu1Vw2Xy3Z4a5B6c7D8e9F0g1H2i3J4k5L6m7N8o9P0
+ANTHROPIC_KEY=sk-ant-api03-AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789
+
+Use these when calling the gateway.

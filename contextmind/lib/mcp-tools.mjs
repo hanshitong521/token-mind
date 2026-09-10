@@ -14,7 +14,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { countTokens, truncateToTokens } from "./tokens.mjs";
+import { normalizeOrientQuery, orientSeenKey } from "./orient-key.mjs";
+import { adapterCacheKey } from "./result-cache.mjs";
 
+export { normalizeOrientQuery, orientSeenKey };
 export const SERVER_NAME = "contextmind";
 export const SERVER_VERSION = "1.0.0";
 
@@ -120,6 +123,10 @@ export function toolSpecs() {
 				type: "object",
 				properties: {
 					query: { type: "string", description: "FQCN, *.java path pattern, or symbol name" },
+					refresh: {
+						type: "boolean",
+						description: "Force re-orient; default false (same symbol blocked for this MCP process)",
+					},
 				},
 				required: ["query"],
 			},
@@ -223,6 +230,63 @@ async function toolOrient(args, rt) {
 	const query = String(args?.query ?? "").trim();
 	if (!query) return { content: [{ type: "text", text: "query is required" }], isError: true };
 	const cfg = rt.cfg;
+	const refresh = args?.refresh === true;
+	const okey = orientSeenKey(query);
+	const sessionId = rt.sessionId ?? "mcp-server";
+	const cacheKey = adapterCacheKey("context_orient", query);
+
+	// 1) Same MCP process — ORIENT_DUP stub (cheapest).
+	if (okey && !refresh) {
+		const prev = rt.seen?.lookup(sessionId, "orient", okey);
+		if (prev) {
+			const skip = cfg.cache_engine?.orientSkipTokensEstimate ?? 364;
+			record(rt, {
+				toolName: "context_orient",
+				success: false,
+				note: "orient_dup",
+				preventedReadTokens: skip,
+				emittedTokens: 40,
+				rawTokens: 0,
+			});
+			const handleHint = prev.handle_id ? ` Prior handle=${prev.handle_id}.` : "";
+			return {
+				content: [{
+					type: "text",
+					text: statusText(
+						"ORIENT_DUP",
+						`Same symbol already oriented this MCP process (${prev.hits}×, key=${okey}).${handleHint} Use context_fetch with a line selector. Pass refresh=true only if the graph changed.`,
+					),
+				}],
+			};
+		}
+	}
+
+	// 2) Cross-process / cross-session — ResultCache (skip codegraph spawn).
+	if (!refresh && rt.cache) {
+		const hit = rt.cache.lookup(cacheKey);
+		if (hit?.source) {
+			const emitted = countTokens(hit.source);
+			record(rt, {
+				toolName: "context_orient",
+				success: true,
+				note: "orient_cache_hit",
+				handleId: hit.handleId,
+				handleCreated: 0,
+				rawTokens: hit.rawTokens ?? 0,
+				emittedTokens: emitted,
+				adapterUsed: "result_cache",
+				preventedReadTokens: cfg.cache_engine?.orientSkipTokensEstimate ?? 364,
+			});
+			if (okey) rt.seen?.touch(sessionId, "orient", okey, hit.handleId ?? null);
+			return {
+				content: [{
+					type: "text",
+					text: `exit_code=0 explore_ms=0 cache=hit hits=${hit.hits ?? 1}\n${hit.source}`,
+				}],
+			};
+		}
+	}
+
 	if (cfg.adapters?.codegraph?.enabled === false) {
 		return { content: [{ type: "text", text: statusText("ADAPTER_DISABLED", "codegraph disabled in config") }] };
 	}
@@ -234,8 +298,15 @@ async function toolOrient(args, rt) {
 		);
 		return { content: [{ type: "text", text }] };
 	}
+	const t0 = performance.now();
 	const res = runCodegraph(cfg, ["explore", query]);
-	const raw = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`;
+	const exploreMs = Math.round(performance.now() - t0);
+	let raw = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`;
+	// Cap before Output Gate — huge explore dumps dominate wall time.
+	const MAX_ORIENT_RAW_CHARS = 120_000;
+	if (raw.length > MAX_ORIENT_RAW_CHARS) {
+		raw = `${raw.slice(0, MAX_ORIENT_RAW_CHARS)}\n…[orient raw truncated ${raw.length - MAX_ORIENT_RAW_CHARS} chars for gate]`;
+	}
 	const gate = gateText(rt, {
 		raw,
 		cmd: `codegraph explore ${query}`,
@@ -243,7 +314,14 @@ async function toolOrient(args, rt) {
 		surface: "orient",
 		exitCode: res.status,
 	});
-	return { content: [{ type: "text", text: `exit_code=${res.status}\n${gate.text}` }] };
+	const body = `exit_code=${res.status} explore_ms=${exploreMs}\n${gate.text}`;
+	if (okey) rt.seen?.touch(sessionId, "orient", okey, gate.handleId ?? null);
+	rt.cache?.store(cacheKey, {
+		handleId: gate.handleId ?? null,
+		source: body,
+		rawTokens: gate.rawTokens ?? 0,
+	});
+	return { content: [{ type: "text", text: body }] };
 }
 
 async function toolFind(args, rt) {

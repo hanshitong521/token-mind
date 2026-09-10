@@ -1,0 +1,12 @@
+{
+  "id": "C05-anthropic-tool-use",
+  "file": "C05-anthropic-tool-use.json",
+  "category": "provider",
+  "sourceType": "anthropic",
+  "provider": "anthropic",
+  "bytes": 929,
+  "expect": {
+    "minBlocks": 3
+  },
+  "secretValues": []
+}

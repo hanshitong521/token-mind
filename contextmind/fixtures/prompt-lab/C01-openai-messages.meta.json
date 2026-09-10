@@ -1,0 +1,12 @@
+{
+  "id": "C01-openai-messages",
+  "file": "C01-openai-messages.json",
+  "category": "provider",
+  "sourceType": "openai",
+  "provider": "openai",
+  "bytes": 429,
+  "expect": {
+    "minBlocks": 3
+  },
+  "secretValues": []
+}

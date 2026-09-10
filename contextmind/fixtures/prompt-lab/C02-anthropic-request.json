@@ -1,0 +1,45 @@
+{
+  "model": "claude-sonnet-4-5",
+  "system": "You are a careful coding assistant. Never modify tests to make them pass.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Locate the NPE in the payment callback and fix the root cause."
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from disk.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "grep",
+      "description": "Search the repository for a literal or regex pattern.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "glob": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ]
+      }
+    }
+  ]
+}

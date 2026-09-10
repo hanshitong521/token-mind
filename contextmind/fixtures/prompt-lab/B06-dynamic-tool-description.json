@@ -1,0 +1,19 @@
+{
+  "tools": [
+    {
+      "name": "current_deploy_status",
+      "description": "Live deploy status refreshed at 2026-09-09T10:32:20Z for build 8f14e45f.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "env": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "env"
+        ]
+      }
+    }
+  ]
+}

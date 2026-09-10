@@ -1,0 +1,15 @@
+{
+  "id": "B07-inline-schema-duplicate",
+  "file": "B07-inline-schema-duplicate.md",
+  "category": "tool-mcp",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 422,
+  "expect": {
+    "minBlocks": 1,
+    "ruleIds": [
+      "Q12-SCHEMA-DUP"
+    ]
+  },
+  "secretValues": []
+}

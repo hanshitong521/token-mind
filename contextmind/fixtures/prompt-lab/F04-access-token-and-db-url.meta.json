@@ -1,0 +1,20 @@
+{
+  "id": "F04-access-token-and-db-url",
+  "file": "F04-access-token-and-db-url.md",
+  "category": "security",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 147,
+  "expect": {
+    "minBlocks": 1,
+    "secrets": true,
+    "secretKinds": [
+      "access_token",
+      "database_url"
+    ]
+  },
+  "secretValues": [
+    "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+    "ExamplePass123"
+  ]
+}

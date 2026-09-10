@@ -1,0 +1,12 @@
+{
+  "id": "C06-local-qwen-agent",
+  "file": "C06-local-qwen-agent.json",
+  "category": "provider",
+  "sourceType": "openai",
+  "provider": "qwen",
+  "bytes": 306,
+  "expect": {
+    "minBlocks": 2
+  },
+  "secretValues": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "A09-persona-and-negation",
+  "file": "A09-persona-and-negation.md",
+  "category": "agent-instruction",
+  "sourceType": "markdown",
+  "provider": "generic",
+  "bytes": 225,
+  "expect": {
+    "minBlocks": 2,
+    "ruleIds": [
+      "Q05",
+      "Q11"
+    ]
+  },
+  "secretValues": []
+}

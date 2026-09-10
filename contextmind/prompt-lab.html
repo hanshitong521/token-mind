@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Lab</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#fff; --line:#e3e6ea; --text:#1f2328; --muted:#6a737d;
+    --brand:#0b6bcb; --ok:#0a8f3c; --warn:#b45309; --bad:#c0392b; --code:#f3f4f6;
+    --chip:#eef1f4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:15px;margin:0}
+  header .meta{color:var(--muted);font-size:12px}
+  .tabs{display:flex;gap:2px;margin-left:auto}
+  .tabs button{border:0;background:transparent;padding:7px 12px;cursor:pointer;border-radius:6px;color:var(--muted)}
+  .tabs button.active{background:var(--brand);color:#fff}
+  main{padding:12px;max-width:1500px;margin:0 auto}
+  section.page{display:none}
+  section.page.active{display:block}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  textarea{width:100%;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;color:var(--text)}
+  textarea.mini{height:120px}
+  textarea.big{height:300px}
+  button{background:var(--brand);color:#fff;border:0;border-radius:6px;padding:5px 12px;cursor:pointer}
+  button.ghost{background:var(--chip);color:var(--text)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 6px;color:var(--text)}
+  .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .col{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;min-width:0}
+  .col h3{margin:0 0 6px;font-size:12px;color:var(--muted);font-weight:600}
+  .two{grid-template-columns:1fr 1fr}
+  .three2{grid-template-columns:1.2fr 1fr}
+  .stack{max-height:420px;overflow:auto}
+  .block{border-bottom:1px dashed var(--line);padding:5px 6px;cursor:default}
+  .block:hover{background:#f2f7fd}
+  .block.sel{outline:2px solid var(--brand);background:#e9f3ff}
+  .block.red{outline:2px solid var(--bad);background:#fdeeee}
+  .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .kind{font-size:10px;background:var(--chip);border-radius:4px;padding:1px 5px;color:var(--muted);white-space:nowrap}
+  .kind.rule{background:#fff1e6;color:#9a4d00}.kind.tool_schema{background:#e8efff;color:#1a3fae}
+  .kind.user_request{background:#e6f7ec;color:#0a5c2c}.kind.tool_result,.kind.history{background:#f6e6ff;color:#6a1f9e}
+  .kind.project_contract,.kind.repo_map,.kind.wiki,.kind.example{background:#eef7e0;color:#3f6212}
+  .kind.code,.kind.diff{background:#eee;color:#444}
+  .mu{font-size:10px;padding:1px 5px;border-radius:4px;border:1px solid var(--line);color:var(--muted)}
+  .mu.DO_NOT_TOUCH{color:var(--bad);border-color:#eab;background:#fff7f7}
+  .mu.SAFE_REORDER{color:#0a5c2c;border-color:#9dc9a5;background:#f0faf1}
+  .pre{white-space:pre-wrap;word-break:break-all;font:11px/1.45 ui-monospace,Consolas,monospace}
+  .snip{font:11px/1.45 ui-monospace,Consolas,monospace;color:#333;white-space:pre-wrap;word-break:break-all;max-height:76px;overflow:hidden;margin-top:2px}
+  .sev{font-size:10px;font-weight:700;border-radius:4px;padding:1px 6px;color:#fff}
+  .sev.CRITICAL{background:var(--bad)}.sev.HIGH{background:#d35400}.sev.MEDIUM{background:#b8860b}.sev.LOW{background:#0b6bcb}.sev.INFO{background:#7f8c8d}
+  .finding{padding:6px;border-bottom:1px dashed var(--line);cursor:pointer}
+  .finding:hover{background:#f2f7fd}
+  .chips{display:flex;gap:4px;flex-wrap:wrap}
+  .chips button{background:var(--chip);color:var(--text);padding:2px 8px;font-size:11px}
+  .chips button.on{background:var(--brand);color:#fff}
+  .stat{font-size:11px;color:var(--muted)}
+  .stat b{color:var(--text)}
+  .banner{border-radius:8px;padding:8px 10px;margin:8px 0;border:1px solid}
+  .banner.ok{background:#eafaf0;border-color:#a7d7b5;color:#0a5c2c}
+  .banner.warn{background:#fdf3e3;border-color:#ecd9a8;color:#7a4e00}
+  .banner.bad{background:#fdeeee;border-color:#e9b9b9;color:#8f2a22}
+  .banner.grey{background:#f1f3f5;border-color:#d5d9de;color:#555}
+  .bar{background:var(--chip);border-radius:999px;height:16px;position:relative;overflow:visible;margin:6px 0}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#34a853,#0b6bcb);border-radius:999px}
+  .bar b{position:absolute;top:-2px;font-size:10px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+  .op:hover{background:#f2f7fd}
+  .badge{display:inline-block;font-size:10px;border-radius:4px;padding:0 5px;background:var(--chip);color:var(--muted)}
+  .delta-down{color:var(--ok);font-weight:700}.delta-up{color:var(--bad);font-weight:700}
+  .mono{font-family:ui-monospace,Consolas,monospace}
+  .layers{display:flex;flex-direction:column;gap:3px}
+  .layerbar{background:var(--chip);border-radius:4px;height:14px}
+  .layerbar i{display:block;height:100%;background:#8ab6e8;border-radius:4px}
+  .muted{color:var(--muted)} .small{font-size:11px}
+  .vi{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Prompt Lab</h1>
+  <span class="meta" id="meta"></span>
+  <nav class="tabs" id="tabs">
+    <button data-t="analyze" class="active">分析器 Analyze</button>
+    <button data-t="optimize">优化器 Optimize</button>
+    <button data-t="eval">Eval</button>
+    <button data-t="cache">缓存 Cache</button>
+    <button data-t="token">Token</button>
+    <button data-t="history">History</button>
+    <button data-t="providers">Provider Rules</button>
+  </nav>
+</header>
+<main>
+
+<section class="page active" id="p-analyze">
+  <div class="toolbar">
+    <span class="stat">模式 <select id="srcSel">
+      <option value="markdown">Markdown / 指令文件</option>
+      <option value="openai">OpenAI messages</option>
+      <option value="anthropic">Anthropic request</option>
+    </select></span>
+    <button id="btnAnalyze">▶ 分析</button>
+    <button id="btnToOptimize" class="ghost">→ 送去优化器</button>
+    <span class="stat" id="anStat"></span>
+  </div>
+  <textarea id="anIn" class="big" placeholder="粘贴 Prompt / AGENTS.md / SKILL.md / 规则文件…（本地分析，不落明文日志）"></textarea>
+  <div id="anErr" class="banner bad" style="display:none"></div>
+  <div class="cols" id="anCols" style="display:none">
+    <div class="col"><h3>结构化 Blocks（hover 看类型）</h3><div class="stack" id="anBlocks"></div></div>
+    <div class="col">
+      <h3>Findings</h3>
+      <div class="chips" id="sevChips"></div>
+      <div class="stack" id="anFindings"></div>
+    </div>
+    <div class="col">
+      <h3>评分与指纹</h3>
+      <div id="anScores"></div>
+      <h3>缓存</h3>
+      <div id="anCache"></div>
+      <h3>Gate</h3>
+      <div id="anGate"></div>
+    </div>
+  </div>
+</section>
+
+<section class="page" id="p-optimize">
+  <div class="toolbar">
+    <span class="stat">Mode
+      <select id="optMode">
+        <option value="A">A · Analyze only</option>
+        <option value="B" selected>B · SAFE（默认）</option>
+        <option value="C">C · Conservative Rewrite（需 Eval）</option>
+        <option value="D">D · Experimental（无压缩器=降级）</option>
+      </select>
+    </span>
+    <button id="btnOptimize">⚙ 优化</button>
+    <span class="stat" id="optStat"></span>
+  </div>
+  <textarea id="optIn" class="big" placeholder="与 Analyze 共用内容；可点上面『→ 送去优化器』"></textarea>
+  <div id="optErr" class="banner bad" style="display:none"></div>
+  <div id="optOut" style="display:none">
+    <div id="optBanner"></div>
+    <div class="toolbar">
+      <button id="btnApplySafe" class="ghost">Apply SAFE 子集（不含 Experimental / 红色阻断 / 布局 MOVE）</button>
+      <button id="btnUndo" class="ghost">撤销上次接受（快照还原）</button>
+      <span class="stat" id="optApplied"></span>
+    </div>
+    <div class="cols two">
+      <div class="col"><h3>Before <span id="optBeforeStat" class="stat"></span></h3><div class="stack" id="optBefore"></div></div>
+      <div class="col"><h3>After <span id="optAfterStat" class="stat"></span></h3><div class="stack" id="optAfter"></div></div>
+    </div>
+    <div class="cols three2" style="margin-top:10px">
+      <div class="col"><h3>Patch 操作（单条接受；红色=关键规则删除阻断）</h3><div id="optOps"></div></div>
+      <div class="col"><h3>Stable Layout（§16，候选需单条确认）</h3><div id="optLayout"></div></div>
+    </div>
+    <div class="col" style="margin-top:10px"><h3>Mode C 语义候选（Step 10 · 需 Eval 证据后确认；不经 Apply-SAFE）</h3><div id="optSemantic"></div></div>
+    <div class="col" style="margin-top:10px"><h3>结果文本（复制导出）</h3><textarea id="optText" class="mini" readonly></textarea></div>
+  </div>
+</section>
+
+<section class="page" id="p-eval">
+  <div class="toolbar">
+    <button id="btnEval">▶ 跑 Builtin Eval（当前输入 + 内置数据集 3 例）</button>
+    <button id="btnEvalFull" class="ghost">全量回归（内置数据集 + 41 fixtures）</button>
+    <span class="stat" id="evalStat"></span>
+  </div>
+  <div id="evalErr" class="banner bad" style="display:none"></div>
+  <div id="evalOut" style="display:none">
+    <div id="evalBanner"></div>
+    <div class="cols" style="margin-top:8px">
+      <div class="col"><h3>指标（§29）</h3><div id="evalMetrics" class="pre"></div></div>
+      <div class="col"><h3>断言（critical assertions 驱动 gate）</h3><div id="evalAssertions"></div></div>
+      <div class="col"><h3>负向控制（§30）</h3><div id="evalNegative"></div></div>
+    </div>
+    <div class="col" style="margin-top:8px"><h3>按用例结果</h3><div id="evalCases" class="stack"></div></div>
+    <div class="col" style="margin-top:8px"><h3>导出（Step 11）</h3>
+      <div class="row" id="exportRow">
+        <select id="exportFmt">
+          <option value="AGENTS">AGENTS.md</option>
+          <option value="CLAUDE">CLAUDE.md</option>
+          <option value="RULES">Cursor Rule (.mdc)</option>
+          <option value="SKILL">SKILL.md</option>
+          <option value="openai_json">OpenAI messages JSON</option>
+          <option value="anthropic_json">Anthropic request JSON</option>
+        </select>
+        <button id="btnExport" class="ghost">导出当前输入</button>
+        <textarea id="exportOut" class="mini" readonly placeholder="导出结果…"></textarea>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="page" id="p-cache">
+  <div class="toolbar"><button id="btnCache">▶ 缓存分析</button><span class="stat">复用上方输入区内容</span></div>
+  <div id="cacheOut"></div>
+</section>
+
+<section class="page" id="p-token">
+  <div class="toolbar"><button id="btnToken">▶ Token 分布</button><span class="stat">按 §13 层归类（System/Rules/Tools/Project/Dynamic/User）</span></div>
+  <div id="tokenOut"></div>
+</section>
+
+<section class="page" id="p-history">
+  <div class="toolbar"><button id="btnHist">↻ 刷新 History</button><span class="stat">版本不可变：每次 analyze/optimize/apply/undo 都新增一个 prompt:// 版本</span></div>
+  <div class="cols two" style="margin-top:8px">
+    <div class="col"><h3>版本列表</h3><div id="histList" class="stack"></div></div>
+    <div class="col"><h3>详情</h3><div id="histDetail"></div></div>
+  </div>
+</section>
+
+<section class="page" id="p-providers">
+  <div class="toolbar"><button id="btnProv">↻ Provider Rules</button></div>
+  <div class="cols two"><div class="col"><h3>能力注册表（§58）</h3><pre id="provPre" class="pre" style="max-height:600px;overflow:auto"></pre></div><div class="col"><h3>Eval / 引擎状态</h3><pre id="infoPre" class="pre"></pre></div></div>
+</section>
+
+</main>
+<script>
+"use strict";
+const $=(s)=>document.querySelector(s);
+const state={ content:"", sourceType:"markdown", lastAnalyze:null, lastOptimize:null, lastEval:null, lastChildVersion:null, lastBaseVersion:null, lastOps:[], lastFindings:[], lastLayoutMoves:[], versionChain:[], sevFilter:"ALL" };
+
+async function api(path, body){
+  const r=await fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});
+  const j=await r.json().catch(()=>({ok:false,error:"bad json"}));
+  if(!r.ok && !("ok" in j)) j.ok=false;
+  return j;
+}
+function esc(s){return String(s??"").replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function kindChip(k){return `<span class="kind ${esc(k)}">${esc(k)}</span>`;}
+function muChip(m){return `<span class="mu ${esc(m)}">${esc(m)}</span>`;}
+function sevChip(s){return `<span class="sev ${esc(s)}">${esc(s)}</span>`;}
+function sig(n){return (n??0)>=0?`+${n}`:`${n}`;}
+
+async function loadMeta(){
+  const i=await api("/promptLab/info",{});
+  if(i.ok) $("#meta").textContent=`engine v${i.engine} · rule-pack v${i.rulePack} · eval: ${i.evalProvider}`;
+}
+
+function currentInput(){ state.content=$("#anIn").value||$("#optIn").value; return state.content; }
+function syncInputs(){ const v=currentInput(); $("#anIn").value=v; $("#optIn").value=v; }
+$("#anIn").addEventListener("input",()=>{ state.content=$("#anIn").value; $("#optIn").value=state.content; });
+$("#optIn").addEventListener("input",()=>{ state.content=$("#optIn").value; $("#anIn").value=state.content; });
+$("#srcSel").addEventListener("change",()=>state.sourceType=$("#srcSel").value);
+
+// ── tabs ──
+$("#tabs").addEventListener("click",(e)=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("active",x===b));
+  document.querySelectorAll("section.page").forEach(x=>x.classList.remove("active"));
+  $("#p-"+b.dataset.t).classList.add("active");
+  if(b.dataset.t==="history") loadHistory();
+  if(b.dataset.t==="providers") loadProviders();
+  if(b.dataset.t==="eval") evalRun({});
+});
+
+// ── Analyze ──
+$("#btnAnalyze").addEventListener("click",analyzeNow);
+async function analyzeNow(){
+  const content=currentInput(); if(!content.trim()) return err("anErr","请输入内容");
+  syncInputs();
+  const r=await api("/promptLab/analyze",{content,sourceType:state.sourceType,title:"paste"});
+  if(!r.ok) return err("anErr",r.error||"analyze failed");
+  state.lastAnalyze=r;
+  $("#anCols").style.display="grid";
+  renderBlocks("anBlocks",r.blocks);
+  renderSeverityChips(r.findingsSummary);
+  renderFindings(r.findings);
+  renderScores(r);
+  renderGate(r.gate);
+  $("#anStat").textContent=`tokens ${r.tokens} · version ${r.version.versionNo}`;
+  $("#anErr").style.display="none";
+}
+function err(id,msg){ const el=$("#"+id); el.textContent=msg; el.style.display="block"; }
+function renderBlocks(id,blocks,selIdx){
+  const host=$("#"+id); host.innerHTML=blocks.map((b,i)=>{
+    return `<div class="block" data-i="${i}" data-k="${esc(b.kind)}" data-mu="${esc(b.mutability)}">
+      <div class="row"><span class="mono muted">#${i}</span>${kindChip(b.kind)}${muChip(b.mutability)}
+        <span class="stat">${esc(b.stability??"")} · ${b.tokens}t</span></div>
+      <div class="snip">${esc((b.text||"").slice(0,180))}</div></div>`;
+  }).join("");
+  host.querySelectorAll(".block").forEach(el=>{
+    el.addEventListener("click",()=>{
+      host.querySelectorAll(".block.sel").forEach(x=>x.classList.remove("sel"));
+      el.classList.add("sel");
+      if(id==="anBlocks"){ const i=+el.dataset.i; highlightFinding(i); }
+    });
+    el.title=`kind=${el.dataset.k} mutability=${el.dataset.mu}`;
+  });
+  if(selIdx!=null){ const el=host.querySelector(`[data-i="${selIdx}"]`); if(el){ el.classList.add("sel"); el.scrollIntoView({block:"nearest"}); } }
+}
+function renderSeverityChips(sum){
+  const order=["CRITICAL","HIGH","MEDIUM","LOW","INFO"];
+  const counts=sum||{};
+  const host=$("#sevChips"); host.innerHTML="";
+  const mk=(s)=>{const b=document.createElement("button");b.textContent=`${s} ${counts[s]??0}`;b.classList.toggle("on",state.sevFilter==="ALL"||state.sevFilter===s);b.addEventListener("click",()=>{state.sevFilter=(state.sevFilter===s?"ALL":s);renderSeverityChips(sum);renderFindings(state.lastAnalyze?.findings||state.lastFindings||[]);});host.appendChild(b);};
+  mk("ALL");
+  order.forEach(mk);
+}
+function renderFindings(findings){
+  state.lastFindings=findings;
+  const host=$("#anFindings"); host.innerHTML="";
+  const list=(findings||[]).filter(f=>state.sevFilter==="ALL"||f.severity===state.sevFilter);
+  if(!list.length){host.innerHTML='<div class="muted">无 finding（当前过滤）</div>';return;}
+  list.forEach((f,i)=>{
+    const d=document.createElement("div"); d.className="finding";
+    d.innerHTML=`<div class="row">${sevChip(f.severity)}<b>${esc(f.ruleId)}</b><span class="small muted">${esc(f.category||"")}</span></div>
+      <div>${esc(f.title||"")}</div>${f.explanation?`<div class="small muted">${esc(f.explanation)}</div>`:""}`;
+    d.addEventListener("click",()=>{
+      const id=f.blockIds&&f.blockIds[0];
+      const b=(state.lastAnalyze?.blocks||[]).find(x=>x.blockId===id);
+      if(b) highlightBlock("anBlocks",b.index);
+    });
+    host.appendChild(d);
+  });
+}
+function highlightBlock(id,idx){
+  const host=$("#"+id); host.querySelectorAll(".block.sel").forEach(x=>x.classList.remove("sel"));
+  const el=host.querySelector(`[data-i="${idx}"]`); if(el){el.classList.add("sel");el.scrollIntoView({block:"nearest"});}
+}
+function highlightFinding(idx){ renderBlocks("anBlocks",state.lastAnalyze.blocks,idx); renderFindings(state.lastFindings); }
+function renderScores(r){
+  const s=r.scores||{}; const dim=r.scoreDimensions||{};
+  $("#anScores").innerHTML=`<table><tr><th>维度</th><th>分</th><th>档</th></tr>
+    ${["quality","cacheStability","tokenEfficiency","determinism","risk"].map(k=>`<tr><td>${k}</td><td><b>${s[k]??"—"}</b></td><td class="small muted">${dim[k]?.label??""}</td></tr>`).join("")}</table>`;
+}
+function renderGate(g){
+  if(!g) return;
+  const rows=Object.entries(g.checks||{}).map(([k,v])=>{const c=v==="PASS"?"delta-down":v==="FAIL"?"vi":"muted";return `<tr><td class="mono">${esc(k)}</td><td class="${c}"><b>${esc(v)}</b></td></tr>`;}).join("");
+  const rec=g.recommendable?"✅":"⛔";
+  $("#anGate").innerHTML=`<div>${rec} recommendable = ${g.recommendable}</div><table>${rows}</table>`;
+}
+function renderCacheInfo(hostId,cache){
+  const el=$("#"+hostId); if(!cache) return;
+  const pct=Math.round((cache.stablePrefixRatio||0)*100);
+  el.innerHTML=`<div class="bar" style="width:100%"><i style="width:${pct}%"></i></div>
+    <div class="stat">Stable Prefix <b>${pct}%</b>（${cache.stablePrefixTokens} tokens / ${cache.totalTokens}）
+    ${cache.firstDynamicBlock?`<br>第一个 Prefix Breaker: <span class="mono">${esc(cache.firstDynamicBlock)}</span>`:"<br>全静态前缀，无 breaker"}<br>cache breakers: ${cache.cacheBreakerCount}</div>`;
+}
+
+// Analyze → Optimize
+$("#btnToOptimize").addEventListener("click",()=>{
+  syncInputs();
+  document.querySelector(`#tabs button[data-t="optimize"]`).click();
+});
+
+// ── Optimize ──
+$("#btnOptimize").addEventListener("click",optimizeNow);
+async function optimizeNow(){
+  const content=currentInput(); if(!content.trim()) return err("optErr","请输入内容");
+  syncInputs();
+  const r=await api("/promptLab/optimize",{content,sourceType:state.sourceType,mode:$("#optMode").value});
+  if(!r.ok) return err("optErr",r.error||"optimize failed");
+  state.lastOptimize=r; state.lastBaseVersion=r.version.versionId; state.lastChildVersion=null;
+  $("#optErr").style.display="none"; $("#optOut").style.display="block";
+  const rec=r.recommendation||{};
+  const cls={SAFE_APPLY:"ok",ANALYZE_ONLY:"grey",EVAL_REQUIRED:"warn",BLOCKED:"bad",EXPERIMENTAL_UNAVAILABLE:"bad"}[rec.status]||"grey";
+  $("#optBanner").innerHTML=`<div class="banner ${cls}"><b>${esc(rec.status)}</b> · risk=${esc(rec.patchRisk)} · apply=${rec.apply}
+    <div class="small">${(rec.reasons||[]).map(esc).join("；")}</div></div>`;
+  $("#optStat").textContent=`tokens ${sig(r.summary.deltaTokens)} · quality ${r.delta.quality==null?"—":sig(r.delta.quality)} · cache ${r.delta.cacheStability==null?"—":sig(r.delta.cacheStability)} · version ${r.version.versionNo}`;
+  renderBlocks("optBefore",r.originalBlocks);
+  renderBlocks("optAfter",r.optimizedBlocks);
+  renderOps(r);
+  renderLayout(r.layout,r.version.versionId);
+  renderSemantic(r);
+  $("#optText").value=(r.optimizedBlocks||[]).map(b=>b.text).join("\n");
+  $("#optApplied").textContent="";
+}
+
+function renderSemantic(r){
+  const host=$("#optSemantic"); host.innerHTML="";
+  const pending=r.pendingEval||[];
+  if(!pending.length){ host.innerHTML='<div class="muted small">Mode C 无语义候选（Mode A/B 无此步骤）。</div>'; return; }
+  host.innerHTML=`<div class="small muted">${pending.length} 个候选需要 P10 Eval 证据；先在 Eval 页对该内容跑一次通过，再点确认。</div>`;
+  pending.forEach((c,i)=>{
+    const d=document.createElement("div"); d.className="row";
+    d.style.padding="4px 0"; d.style.borderBottom="1px dashed var(--line)";
+    d.innerHTML=`<span class="badge" style="background:#fff1e6;color:#9a4d00">SEMANTIC</span>
+      <span class="mono small">${esc(c.ruleId)}</span>
+      <span class="small muted">${esc((c.why||"").slice(0,110))}</span>
+      <span class="stat">${(c.ops||[]).length} op</span>
+      <button class="ghost" data-sem="${i}">确认并应用（需 Eval 通过）</button>`;
+    d.querySelector("button").addEventListener("click",async()=>{
+      const cand=pending[i];
+      const body={versionId:state.lastOptimize.version.versionId};
+      if(cand.candidateId) body.candidateId=cand.candidateId;
+      else if((cand.ops||[]).length) body.ops=cand.ops;
+      const res=await api("/promptLab/semantic/confirm",body);
+      if(!res.ok){ alert(res.error||res.reason||"confirm failed"); return; }
+      state.lastChildVersion=res.childVersionId;
+      $("#optApplied").textContent=`语义合并已确认 → version ${res.detail.version.versionNo}（risk ${res.risk}）`;
+      $("#optText").value=res.detail.text;
+      renderBlocks("optAfter",res.detail.blocks);
+      host.innerHTML='<div class="muted small">候选已应用；可撤销（快照还原）。</div>';
+    });
+    host.appendChild(d);
+  });
+}
+function renderOps(r){
+  const host=$("#optOps"); host.innerHTML="";
+  const redId=new Set();
+  (r.findings||[]).forEach(f=>{ if(f.severity==="CRITICAL"||f.severity==="HIGH") (f.blockIds||[]).forEach(id=>redId.add(id)); });
+  const rows=r.patchOps||[];
+  if(!rows.length){host.innerHTML='<div class="muted">无 SAFE op（Mode A / 全静态内容）。</div>';return;}
+  host.innerHTML=`<table><tr><th>#</th><th>op</th><th>块</th><th>occ</th><th>rule</th><th>Δt</th><th>risk</th><th></th></tr>
+    ${rows.map((o,i)=>{const isRed=(o.type==="DELETE_DUPLICATE_BLOCK"||o.type==="REPLACE_BLOCK")&&redId.has(o.blockId);
+      return `<tr class="op ${isRed?"red":""}" data-i="${i}">
+      <td class="mono">${i}</td><td class="mono">${esc(o.type)}</td>
+      <td class="mono" title="${esc(o.why||"")}">${esc(String(o.blockId).slice(0,10))}</td>
+      <td>${o.occurrence??0}</td><td>${esc(o.ruleId||"")}</td>
+      <td>${o.tokenDelta!=null?`<span class="${(o.tokenDelta||0)<=0?"delta-down":"delta-up"}">${sig(o.tokenDelta)}</span>`:"—"}</td>
+      <td>${esc(o.risk||"SAFE")}</td>
+      <td>${isRed?"<span class='vi'>阻断</span>":`<button class="ghost" data-act="op">接受</button>`}</td></tr>`;}).join("")}
+  </table>`;
+  host.querySelectorAll("[data-act=op]").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const i=+btn.closest("tr").dataset.i;
+      await applyOps([state.lastOptimize.patchOps[i]]);
+    });
+  });
+}
+async function applyOps(ops){
+  if(!state.lastBaseVersion) return;
+  const r=await api("/promptLab/patch/apply",{versionId:state.lastBaseVersion,ops,why:"ui-accept"});
+  if(!r.ok){ alert(r.error||r.reason||"apply failed"); return; }
+  state.lastChildVersion=r.childVersionId;
+  $("#optApplied").textContent=`已接受 → 新版本 ${r.detail.version.versionNo}（${ops.length} op）`;
+  $("#optText").value=r.detail.text;
+  const d=r.detail;
+  renderBlocks("optAfter",d.blocks);
+}
+$("#btnApplySafe").addEventListener("click",async()=>{
+  const r=state.lastOptimize; if(!r) return;
+  const safe=(r.patchOps||[]).filter(o=>(o.risk??"SAFE")==="SAFE");
+  if(!safe.length){alert("没有可自动应用的 SAFE op");return;}
+  await applyOps(safe);
+});
+$("#btnUndo").addEventListener("click",async()=>{
+  const vid=state.lastChildVersion; if(!vid){alert("先接受一条 patch 才能撤销");return;}
+  const r=await api("/promptLab/patch/reverse",{versionId:vid});
+  if(!r.ok){alert(r.error||"undo failed");return;}
+  $("#optApplied").textContent=`已撤销 → 恢复快照 version ${r.detail.version.versionNo}`;
+  $("#optText").value=r.detail.text;
+  renderBlocks("optAfter",r.detail.blocks);
+});
+function renderLayout(layout,versionId){
+  const host=$("#optLayout"); host.innerHTML="";
+  if(!layout) return;
+  const rep=layout.report||{};
+  const vi=(rep.violations||[]).filter(v=>v.movable!==false);
+  host.innerHTML=`<div class="stat">frontier: ${rep.frontier?`<span class="mono">${esc(rep.frontier.blockId.slice(0,10))}</span> @${rep.frontier.index} · prefix ${Math.round((rep.summary?.stablePrefixRatio||0)*100)}%`:"全静态（无 frontier）"} · 可移动候选 ${(layout.moves?.candidates||[]).length}</div>`;
+  (layout.moves?.candidates||[]).forEach((c,i)=>{
+    const b=document.createElement("div"); b.className="row";
+    b.innerHTML=`<span class="badge">LAYOUT</span> <span class="mono small">${esc(c.blockId.slice(0,10))}#${c.occurrence}</span>
+      <span class="small muted">${esc((c.op.from)+" → "+(c.op.to))} · 预计前缀 +${c.op.cacheGainTokens}t</span>
+      <button class="ghost" data-i="${i}">接受移动</button>`;
+    b.querySelector("button").addEventListener("click",async()=>{
+      const r=await api("/promptLab/patch/apply",{versionId,ops:[layout.moves.candidates[i].op],why:"layout-accept"});
+      if(!r.ok){alert(r.error||r.reason||"apply failed");return;}
+      state.lastChildVersion=r.childVersionId;
+      $("#optApplied").textContent=`布局移动已接受 → version ${r.detail.version.versionNo}`;
+      $("#optText").value=r.detail.text;
+      renderBlocks("optAfter",r.detail.blocks);
+    });
+    host.appendChild(b);
+  });
+  if(!vi.length && !(layout.moves?.candidates||[]).length) host.insertAdjacentHTML("beforeend",'<div class="muted small">布局合规：无 stable-after-frontier 违规实例。</div>');
+}
+
+// ── Cache page ──
+$("#btnCache").addEventListener("click",async()=>{
+  const content=currentInput(); if(!content.trim()) return;
+  const r=state.lastAnalyze && state._cacheInput===content ? state.lastAnalyze : await api("/promptLab/analyze",{content,sourceType:state.sourceType});
+  state._cacheInput=content;
+  if(!r.ok) return;
+  state.lastAnalyze=r; // cache/token reuse the analyze bundle of the same content
+  const host=$("#cacheOut");
+  host.innerHTML=`<div class="col"><h3>Cache Stability</h3><div id="cacheBar"></div><div id="cacheExtra"></div></div>`;
+  renderCacheInfo("cacheBar",r.cache);
+  const ly=await api("/promptLab/layout",{content,sourceType:state.sourceType});
+  if(ly.ok){
+    const v=ly.layout.report.violations||[];
+    $("#cacheExtra").innerHTML=`<h3>§16 布局违规（${v.length}）</h3>`+(v.length?`<table><tr><th>rule</th><th>块</th><th>kind</th><th>mutable</th><th>原因</th></tr>${v.map(x=>`<tr><td>${esc(x.ruleId)}</td><td class="mono">${esc(x.blockId.slice(0,10))}#${x.occurrence}</td><td>${esc(x.kind)}</td><td>${x.movable?"可移动":"<span class='vi'>不可(自动)</span>"}</td><td class="small">${esc((x.why||"").slice(0,120))}</td></tr>`).join("")}</table>`:'<div class="muted small">无布局违规。</div>');
+  }
+});
+
+// ── Token page ──
+$("#btnToken").addEventListener("click",async()=>{
+  const content=currentInput(); if(!content.trim()) return;
+  const a=await api("/promptLab/analyze",{content,sourceType:state.sourceType});
+  if(!a.ok) return;
+  const layers={System:0,Rules:0,Tools:0,Project:0,Dynamic:0,User:0};
+  const byKind={};
+  (a.blocks||[]).forEach(b=>{
+    const k=b.kind;
+    byKind[k]=(byKind[k]||0)+b.tokens;
+    let L="Dynamic";
+    if(k==="user_request")L="User"; else if(k==="tool_schema")L="Tools";
+    else if(k==="rule"||k==="instruction")L="Rules"; else if(k==="code")L="Rules";
+    else if(["project_contract","repo_map","wiki","example"].includes(k))L="Project";
+    else if(["history","tool_result","diff"].includes(k))L="Dynamic";
+    layers[L]+=b.tokens;
+  });
+  const max=Math.max(1,...Object.values(layers));
+  $("#tokenOut").innerHTML=`<div class="cols two"><div class="col"><h3>按层（§13）</h3><table>
+    ${Object.entries(layers).map(([k,v])=>`<tr><td>${k}</td><td class="mono"><b>${v.toLocaleString()}</b></td><td style="width:40%"><div class="layerbar"><i style="width:${Math.round(v/max*100)}%"></i></div></td></tr>`).join("")}
+    <tr><td><b>Total</b></td><td class="mono"><b>${a.tokens.toLocaleString()}</b></td><td></td></tr></table></div>
+    <div class="col"><h3>按 kind</h3><table>${Object.entries(byKind).sort((x,y)=>y[1]-x[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="mono">${v.toLocaleString()}</td></tr>`).join("")}</table>
+    <div class="muted small" style="margin-top:6px">tokenizer: heuristic:chars/4（估算；§13 token 口径）</div></div></div>`;
+});
+
+// ── History ──
+async function loadHistory(){
+  const l=await api("/promptLab/history/list",{limit:100});
+  if(!l.ok) return;
+  const host=$("#histList");
+  host.innerHTML=l.versions.map(v=>`<div class="block" data-id="${esc(v.id)}">
+    <div class="row"><span class="badge">${esc(v.kind)}</span>${v.mode?`<span class="badge">${esc(v.mode)}</span>`:""}
+      <span class="mono small">${esc(v.uri)}</span></div>
+    <div class="small muted">${v.title||"—"} · ${new Date(v.createdAt).toLocaleString()} · tokens ${v.tokens?.before??"—"}</div>
+    <div class="small">${v.scores?.quality!=null?`Q ${v.scores.quality} · cache ${v.scores.cacheStability} · risk ${v.scores.risk}`:""}</div></div>`).join("");
+  host.querySelectorAll(".block").forEach(el=>el.addEventListener("click",async()=>{
+    host.querySelectorAll(".block.sel").forEach(x=>x.classList.remove("sel"));
+    el.classList.add("sel");
+    await loadDetail(el.dataset.id);
+  }));
+}
+async function loadDetail(id){
+  const d=await api("/promptLab/history/detail",{versionId:id});
+  if(!d.ok) return;
+  const host=$("#histDetail");
+  host.innerHTML=`<div class="row"><b>${esc(d.version.kind)}</b> <span class="mono">${esc(d.uri)}</span>
+    <span class="stat">tokens ${d.version.tokens?.before??"—"}</span>
+    <button id="hCopy" class="ghost">复制文本</button>
+    ${d.version.kind==="patch_apply"||d.version.kind==="optimize"?`<button id="hExport" class="ghost">导出 Markdown</button>`:""}
+    ${d.version.kind==="patch_apply"?`<button id="hUndo" class="ghost">撤销此版本</button>`:""}
+    ${d.version.parentVersionId?`<span class="badge">parent ${esc(d.version.parentVersionId.slice(0,8))}</span>`:""}</div>
+    <div class="stack" style="max-height:200px;margin-top:6px">${d.blocks.map((b,i)=>`<div class="block"><div class="row"><span class="mono muted">#${i}</span>${kindChip(b.kind)}${muChip(b.mutability)}<span class="stat">${b.tokens?b.tokens.count+"t":""}</span></div><div class="snip">${esc((b.text||"").slice(0,140))}</div></div>`).join("")}</div>
+    <div class="small muted" style="margin:6px 0">${d.findings.length} findings · ${d.patches.length} patch 记录</div>
+    <textarea id="hText" class="mini" readonly>${esc(d.text)}</textarea>`;
+  $("#hCopy").addEventListener("click",()=>{navigator.clipboard.writeText($("#hText").value).catch(()=>{});});
+  const hx=$("#hExport"); if(hx) hx.addEventListener("click",()=>{navigator.clipboard.writeText($("#hText").value).catch(()=>{});alert("已复制（当前为块文本拼接；完整 fidelity 导出见 Step 11 Export）");});
+  const hu=$("#hUndo"); if(hu) hu.addEventListener("click",async()=>{
+    const u=await api("/promptLab/patch/reverse",{versionId:id});
+    if(!u.ok){alert(u.error||"undo failed");return;}
+    alert(`已撤销 → restore version ${u.detail.version.versionNo}`);
+    loadHistory(); loadDetail(u.detail.version.id);
+  });
+}
+$("#btnHist").addEventListener("click",loadHistory);
+
+// ── Eval page (Step 9) ──
+async function evalRun({ full = false } = {}) {
+  const content = full ? null : currentInput();
+  if (!full && !content.trim()) { err("evalErr", "当前输入为空：请在上方粘贴内容，或改用『全量回归』。"); return; }
+  $("#evalErr").style.display = "none";
+  $("#evalStat").textContent = "running…";
+  const r = await api("/promptLab/evaluate", full ? {} : { content, sourceType: state.sourceType });
+  if (!r.ok) { err("evalErr", r.error || "eval failed"); $("#evalStat").textContent = ""; return; }
+  state.lastEval = r;
+  $("#evalOut").style.display = "block";
+  const s = r.summary || {};
+  const ok = s.allPassed;
+  $("#evalBanner").innerHTML = `<div class="banner ${ok ? "ok" : "bad"}"><b>${esc(r.status)}</b> · eval_provider=${esc(r.eval_provider)} · run ${esc(String(r.runId || "").slice(0, 8))}
+    <div class="small">${s.passedCases}/${s.totalCases} cases · ${s.assertionsPassed}/${s.assertionsTotal} assertions · negatives ${s.negativeDetected}/${s.negativeTotal} · regressions ${s.regressionCount}</div></div>`;
+  $("#evalStat").textContent = `status ${r.status} · provider ${r.eval_provider}`;
+  const m = r.metrics || {};
+  $("#evalMetrics").textContent = Object.entries(m).map(([k, v]) => `${k}: ${v}`).join("\n");
+  // assertions table
+  const rows = [];
+  (r.results || []).forEach((c) => (c.assertions || []).forEach((a) => rows.push({ caseId: c.caseId, ...a })));
+  $("#evalAssertions").innerHTML = `<table><tr><th>case</th><th>kind</th><th>断言</th><th></th></tr>${
+    rows.slice(0, 80).map((a) => `<tr><td class="mono small">${esc(String(a.caseId).slice(0, 22))}</td><td class="small">${esc(a.kind)}</td><td class="small">${esc((a.label || "").slice(0, 70))}</td><td>${a.ok ? "✅" : "❌"}</td></tr>`).join("")
+  }</table>`;
+  // negative controls
+  const negs = [];
+  (r.results || []).forEach((c) => (c.negativeControls || []).forEach((n) => negs.push({ caseId: c.caseId, ...n })));
+  $("#evalNegative").innerHTML = negs.length
+    ? `<table><tr><th>case</th><th>控制</th><th></th></tr>${negs.map((n) => `<tr><td class="mono small">${esc(String(n.caseId).slice(0, 22))}</td><td class="small">${esc(n.label)}</td><td>${n.detected ? "✅检出" : "❌漏检"}</td></tr>`).join("")}</table>`
+    : '<div class="muted small">本批无负向控制。</div>';
+  // per case
+  $("#evalCases").innerHTML = (r.results || []).map((c) => {
+    const p = (c.passed ?? c.ok);
+    return `<div class="block"><div class="row"><span class="badge">${p ? "PASS" : "FAIL"}</span>
+      <span class="mono small">${esc(String(c.caseId).slice(0, 30))}</span>
+      <span class="small muted">${esc(c.title || c.category || "")}</span>
+      <span class="stat">${c.assertionsPassed}/${c.assertionsTotal} · neg ${c.negativeDetected ?? 0}/${c.negativeTotal ?? 0}</span></div></div>`;
+  }).join("");
+}
+$("#btnEval").addEventListener("click", () => evalRun({}));
+$("#btnEvalFull").addEventListener("click", () => evalRun({ full: true }));
+
+// Step 11 export
+$("#btnExport").addEventListener("click", async () => {
+  const content = currentInput();
+  if (!content.trim()) return;
+  const fmt = $("#exportFmt").value;
+  const body = fmt === "AGENTS" || fmt === "CLAUDE" || fmt === "RULES" || fmt === "SKILL"
+    ? { content, sourceType: state.sourceType, format: "file", target: fmt }
+    : { content, sourceType: state.sourceType, format: fmt };
+  const r = await api("/promptLab/export", body);
+  if (!r.ok) { alert(r.error || "export failed"); return; }
+  $("#exportOut").value = r.text ?? JSON.stringify(r.json, null, 2);
+});
+
+// ── Providers ──
+async function loadProviders(){
+  const p=await fetch("/promptLab/provider/capabilities").then(r=>r.json());
+  $("#provPre").textContent=p.ok?JSON.stringify(p.providers,null,2):JSON.stringify(p,null,2);
+  const i=await api("/promptLab/info",{});
+  $("#infoPre").textContent=JSON.stringify(i,null,2);
+}
+$("#btnProv").addEventListener("click",loadProviders);
+
+// init
+loadMeta();
+$("#anIn").value='# Rules\n\n- Always reply in Chinese.\n- Deterministic ordering before every request.\n\n# Rules\n\n- Always reply in Chinese.\n- Deterministic ordering before every request.';
+syncInputs();
+</script>
+</body>
+</html>

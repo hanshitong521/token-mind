@@ -1,0 +1,25 @@
+{
+  "tools": [
+    {
+      "name": "aggregate_metrics",
+      "description": "Aggregate per-service latency, error rate and saturation counters across the fleet. Supports grouping by service, region and deployment. Results are approximate when the window exceeds one hour, in which case the response contains a sampling notice. Prefer this tool over reading raw timeseries when you only need a summary. Prefer this tool over reading raw timeseries when you only need a summary. Prefer this tool over reading raw timeseries when you only need a summary. Prefer this tool over reading raw timeseries when you only need a summary. Prefer this tool over reading raw timeseries when you only need a summary. Prefer this tool over reading raw timeseries when you only need a summary. ",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string"
+          },
+          "groupBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "window"
+        ]
+      }
+    }
+  ]
+}
