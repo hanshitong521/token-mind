@@ -1,10 +1,16 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 const ACTIVE = "task.active.json";
 
+function resolveUnderProject(projectRoot, p) {
+	const s = String(p ?? "").trim();
+	if (!s) return join(projectRoot, ".contextmind", ACTIVE);
+	return isAbsolute(s) ? resolve(s) : join(projectRoot, s);
+}
+
 export function taskFilePath(projectRoot, cfg = {}) {
-	if (cfg?.sdlc?.task_file) return join(projectRoot, cfg.sdlc.task_file);
+	if (cfg?.sdlc?.task_file) return resolveUnderProject(projectRoot, cfg.sdlc.task_file);
 	return join(projectRoot, ".contextmind", ACTIVE);
 }
 
