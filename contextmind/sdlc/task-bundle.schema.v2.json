@@ -22,7 +22,11 @@
         "goal": { "type": "string", "maxLength": 500 }
       }
     },
-    "spec": { "type": "object" },
+    "spec": {
+      "type": "object",
+      "description": "Optional spec.verify follows contextmind/sdlc/task-bundle.verify.schema.json",
+      "additionalProperties": true
+    },
     "plan": { "type": "object" },
     "eval": { "type": "object" },
     "meta": { "type": "object" }

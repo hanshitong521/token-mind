@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contextmind/task-bundle/verify/v1",
+  "title": "TaskBundle verify slice (TestMind intake)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "change_manifest": {
+      "type": "object",
+      "required": ["schema_version", "task_id", "project_id", "service_id", "repo"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "task_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "service_id": { "type": "string" },
+        "repo": {
+          "type": "object",
+          "properties": {
+            "base_sha": { "type": "string" },
+            "head_sha": { "type": "string" }
+          }
+        },
+        "changes": { "type": "object" },
+        "risks": { "type": "object" },
+        "verification_hints": { "type": "object" },
+        "environment_ref": { "type": "string" }
+      }
+    },
+    "decision_context_ref": { "type": "string" },
+    "environment_ref": { "type": "string" },
+    "consumer_repo_root": { "type": "string" }
+  }
+}
