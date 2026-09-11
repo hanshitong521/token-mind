@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import "./llm-profile.mjs";
 import { applyPeakCacheEngine } from "./cache-engine/peak-profile.mjs";
+import { CACHE_ENGINE_DEFAULTS } from "./cache-engine/defaults.mjs";
 import { applyShejiuDataPaths } from "./shejiu-data-root.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -161,7 +162,14 @@ export const DEFAULTS = {
 	},
 
 	adapters: {
-		codegraph: { enabled: true, probe_tools: true, servers: ["codegraph"], bin: "codegraph" },
+		codegraph: {
+			enabled: true,
+			probe_tools: true,
+			servers: ["codegraph"],
+			bin: "codegraph",
+			/** auto = node+callers+callees for simple symbols; explore for paths/globs; explore = always full explore */
+			orient_mode: "auto",
+		},
 		mysql: { enabled: true, servers: ["ads-mysql"] },
 		/** 真实 serena（Python LSP MCP）可选 adapter，默认关闭；开启且装了 serena 时 context_outline engine=serena 委托。 */
 		serena: { enabled: false, bin: "serena" },
@@ -215,25 +223,8 @@ export const DEFAULTS = {
 		mem_max: 256,
 		redis_url: "",
 	},
-	cache_engine: {
-		promptCache: true,
-		contextCache: true,
-		toolCache: true,
-		sessionDelta: true,
-		semanticCache: false,
-		compression: false,
-		brainSync: false,
-		brainSyncOnStop: false,
-		stablePrefix: true,
-		stablePrefixMode: "always",
-		stablePrefixMaxTokens: 220,
-		stablePrefixTrimRules: false,
-		toolCachePreDeny: false,
-		orientSkipTokensEstimate: 364,
-		peak: false,
-		kvIntegration: false,
-		kvUrl: "",
-	},
+	/** Defaults live in cache-engine/defaults.mjs so config and runtime cannot drift. */
+	cache_engine: { ...CACHE_ENGINE_DEFAULTS },
 
 	/**
 	 * Optional APIs. "none" keeps CodeGraph/gate off the network (default).

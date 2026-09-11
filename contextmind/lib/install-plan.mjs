@@ -28,28 +28,23 @@ exit /b %ERRORLEVEL%
 `;
 }
 
+/**
+ * One entry per (event, hook, failClosed) — entries that agree on all three
+ * carry a single union matcher, because install writes the list verbatim and a
+ * second entry would only duplicate the command. `failClosed` is the one field
+ * that must not be flattened: the raw-CodeGraph block is deliberately
+ * fail-closed while every other pre-deny stays fail-open, so those two stay
+ * apart. Cursor matches `Shell|Read|...` and `MCP:<tool>` against the same
+ * alternation, so a union matcher governs exactly the union of the parts.
+ */
 export const HOOK_ENTRIES = [
 	{
 		event: "preToolUse",
-		matcher: "Read|Grep|Glob|Shell|CallMcpTool",
-		failClosed: false,
-		hook: "cm-pre-tool",
-		purpose: "Read Guard, Grep/Glob bounds, Shell wrap, MCP pre-deny (L2)",
-	},
-	{
-		event: "preToolUse",
 		matcher:
-			"MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run",
+			"Read|Grep|Glob|Shell|CallMcpTool|Task|MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run",
 		failClosed: false,
 		hook: "cm-pre-tool",
-		purpose: "Native MCP context_* (orient once-per-symbol; fetch full=true deny)",
-	},
-	{
-		event: "preToolUse",
-		matcher: "Task",
-		failClosed: false,
-		hook: "cm-pre-tool",
-		purpose: "Block explore subagents replacing CodeGraph",
+		purpose: "Read Guard, Grep/Glob bounds, Shell wrap, Task block, native MCP context_* pre-deny (L2)",
 	},
 	{
 		event: "preToolUse",
@@ -57,15 +52,22 @@ export const HOOK_ENTRIES = [
 			"MCP:codegraph_explore|MCP:codegraph_query|MCP:codegraph_impact|MCP:codegraph_callers|MCP:codegraph_callees",
 		failClosed: true,
 		hook: "cm-pre-tool",
-		purpose: "Block raw CodeGraph MCP; force context_orient",
+		purpose: "Block raw CodeGraph MCP; force context_orient (fail-closed)",
+	},
+	{
+		event: "postToolUse",
+		matcher: "Shell|CallMcpTool",
+		failClosed: false,
+		hook: "cm-post-tool",
+		purpose: "Shell exit audit",
 	},
 	{
 		event: "postToolUse",
 		matcher:
-			"Shell|CallMcpTool|MCP:mysql_query|MCP:semantic_search|MCP:get_evidence|MCP:codegraph_explore|MCP:ads-mysql|MCP:ads-mysql-prod|MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run|MCP:search_project_context|MCP:get_change_context|MCP:save_architecture_decision|MCP:save_bug_memory|MCP:record_task_outcome",
+			"MCP:mysql_query|MCP:semantic_search|MCP:get_evidence|MCP:codegraph_explore|MCP:ads-mysql|MCP:ads-mysql-prod|MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run|MCP:search_project_context|MCP:get_change_context|MCP:save_architecture_decision|MCP:save_bug_memory|MCP:record_task_outcome",
 		failClosed: false,
 		hook: "cm-post-tool",
-		purpose: "Shell exit audit + MCP Output Guard",
+		purpose: "MCP Output Guard",
 	},
 	{
 		event: "sessionStart",

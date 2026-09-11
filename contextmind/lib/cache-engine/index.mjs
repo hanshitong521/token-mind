@@ -15,6 +15,7 @@ import { redisGet, redisSet } from "./redis-io.mjs";
 import { summarizeCacheLedger } from "./cache-ledger.mjs";
 import { normalizeAdapterQuery } from "../result-cache.mjs";
 import { createHash } from "node:crypto";
+import { CACHE_ENGINE_DEFAULTS } from "./defaults.mjs";
 
 function toolArgsForCache(tool_name, args) {
 	const a = args && typeof args === "object" ? { ...args } : args;
@@ -24,27 +25,8 @@ function toolArgsForCache(tool_name, args) {
 	return a;
 }
 
-const DEFAULT_FLAGS = {
-	promptCache: true,
-	contextCache: true,
-	toolCache: true,
-	sessionDelta: true,
-	semanticCache: false,
-	compression: false,
-	brainSync: false,
-	brainSyncOnStop: false,
-	stablePrefix: true,
-	stablePrefixMode: "always",
-	stablePrefixMaxTokens: 220,
-	stablePrefixTrimRules: false,
-	toolCachePreDeny: false,
-	orientSkipTokensEstimate: 364,
-	peak: false,
-	redisPromptMirror: false,
-	semanticMode: "jaccard",
-	kvIntegration: false,
-	kvUrl: "",
-};
+/** Runtime fallback when a caller passes no cfg — same object config.mjs ships. */
+const DEFAULT_FLAGS = { ...CACHE_ENGINE_DEFAULTS };
 
 export class CacheEngine {
 	constructor(db, cfg = {}) {

@@ -1,5 +1,5 @@
 /**
- * S4 six-tool MCP layer (spec 9, decision 5C, ADR-0004).
+ * S4 seven-tool MCP layer (spec 9, decision 5C, ADR-0004).
  *
  * Covers the three contracts that matter:
  *  - the schema tax: tools/list must fit budget.mcp_schema_total tokens;
@@ -48,10 +48,10 @@ after(() => {
 });
 
 describe("schema budget", () => {
-	it("exposes exactly the six spec-9 tools", () => {
+	it("exposes exactly the seven spec-9 tools", () => {
 		assert.deepEqual(
 			toolSpecs().map((t) => t.name),
-			["context_orient", "context_find", "context_get", "context_impact", "context_run", "context_fetch"],
+			["context_orient", "context_find", "context_get", "context_impact", "context_run", "context_fetch", "context_outline"],
 		);
 	});
 
@@ -115,7 +115,11 @@ describe("context_run", () => {
 	});
 
 	it("keeps failure evidence: non-zero exit and stderr survive", async () => {
-		const res = await callTool("context_run", { command: "node -e \"process.stderr.write('boom-trace'); process.exit(3)\"" }, rt);
+		// Use process.execPath, not a bare `node`: the command runs in a child
+		// shell, and `node` is not guaranteed to be on that shell's PATH (the
+		// hook test env and CI both pin PATH). Pinning the absolute interpreter
+		// makes the assertion about exit-code preservation, not about PATH.
+		const res = await callTool("context_run", { command: `"${process.execPath}" -e "process.stderr.write('boom-trace'); process.exit(3)"` }, rt);
 		const text = res.content[0].text;
 		assert.match(text, /exit_code=3/);
 		assert.match(text, /boom-trace/);
@@ -175,7 +179,7 @@ describe("wire protocol (L4 contract, real subprocess)", () => {
 		assert.ok(init.result.capabilities.tools);
 
 		const list = frames.find((f) => f.id === 2);
-		assert.equal(list.result.tools.length, 6);
+		assert.equal(list.result.tools.length, 7);
 
 		const call = frames.find((f) => f.id === 3);
 		assert.equal(call.result.content[0].type, "text");

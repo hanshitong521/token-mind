@@ -1,5 +1,5 @@
 /**
- * The six MCP tools ContextMind exposes to the Agent (spec 9, decision 5C).
+ * The seven MCP tools ContextMind exposes to the Agent (spec 9, decision 5C).
  *
  * Everything upstream is an internal adapter: CodeGraph through its local CLI
  * (probed at call time — a missing binary is a status, never a fake success),
@@ -10,12 +10,15 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
+import { runCodegraphSync } from "./codegraph-spawn.mjs";
+import { codegraphBin, commandAvailable } from "./bin-probe.mjs";
 import { countTokens, truncateToTokens } from "./tokens.mjs";
-import { normalizeOrientQuery, orientSeenKey } from "./orient-key.mjs";
+import { codegraphSymbolArg, isSimpleOrientSymbol, normalizeOrientQuery, orientSeenKey } from "./orient-key.mjs";
 import { adapterCacheKey } from "./result-cache.mjs";
+import { filterNotable, scanSymbols, serializeOutline } from "./symbols.mjs";
 
 export { normalizeOrientQuery, orientSeenKey };
 export const SERVER_NAME = "contextmind";
@@ -37,63 +40,48 @@ function shellSafe(value) {
 	return s;
 }
 
-function codegraphBin(cfg) {
-	return cfg.adapters?.codegraph?.bin ?? "codegraph";
-}
-
-/**
- * Locale-free existence probe. A `shell:true` spawn of a missing .cmd on
- * Windows returns exit 1 with localized stderr, which is indistinguishable
- * from "ran and failed" — so availability is decided by resolving the PATH
- * ourselves, and the two degrade statuses (ADAPTER_MISSING vs NO_INDEX)
- * never depend on the console language.
- */
-const commandCache = new Map();
-function commandAvailable(bin) {
-	if (commandCache.has(bin)) return commandCache.get(bin);
-	let ok = false;
-	try {
-		if (bin.includes("/") || bin.includes("\\")) {
-			ok = existsSync(bin);
-		} else {
-			const win = process.platform === "win32";
-			const exts = win ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";") : [""];
-			for (const dir of (process.env.PATH ?? "").split(win ? ";" : ":")) {
-				if (!dir) continue;
-				for (const ext of exts) {
-					try {
-						if (statSync(join(dir, bin + ext)).isFile()) {
-							ok = true;
-							break;
-						}
-					} catch {
-						/* not this dir */
-					}
-				}
-				if (ok) break;
-			}
-		}
-	} catch {
-		ok = false;
-	}
-	commandCache.set(bin, ok);
-	return ok;
-}
+// codegraphBin / commandAvailable live in ./bin-probe.mjs (shared with probe.mjs).
 
 function codegraphReady(cfg) {
 	return commandAvailable(codegraphBin(cfg));
 }
 
-function runCodegraph(cfg, args) {
-	const bin = codegraphBin(cfg);
-	const cmd = [bin, ...args.map(shellSafe)].join(" ");
-	return spawnSync(cmd, {
-		shell: true,
-		cwd: cfg.project_root ?? process.cwd(),
-		encoding: "utf8",
-		timeout: 120_000,
-		maxBuffer: 64 * 1024 * 1024,
-	});
+function runCodegraph(cfg, args, opts) {
+	return runCodegraphSync(cfg, args, opts);
+}
+
+function orientMode(cfg) {
+	const m = String(cfg?.adapters?.codegraph?.orient_mode ?? "auto").toLowerCase();
+	if (m === "explore" || m === "fast") return m;
+	return "auto";
+}
+
+/** ~1–5s on large repos vs 60–120s for full explore; falls back when output is empty. */
+function runOrientFast(cfg, query) {
+	const sym = codegraphSymbolArg(query);
+	if (!sym) return { ok: false, raw: "", sym: "" };
+	const chunks = [];
+	let worstExit = 0;
+	const nodeRes = runCodegraph(cfg, ["node", sym], { timeoutMs: 25_000 });
+	const nodeCode = nodeRes.status ?? 1;
+	const nodeOut = `${nodeRes.stdout ?? ""}${nodeRes.stderr ? `\n[stderr]\n${nodeRes.stderr}` : ""}`.trim();
+	chunks.push(`### codegraph node ${sym}\nexit_code=${nodeCode}\n${nodeOut}`);
+	let raw = chunks.join("\n\n");
+	let ok = nodeCode === 0 && nodeOut.length > 80;
+	if (ok) {
+		for (const [sub, subArgs] of [
+			["callers", [sym, "--limit", "12"]],
+			["callees", [sym, "--limit", "12"]],
+		]) {
+			const res = runCodegraph(cfg, [sub, ...subArgs], { timeoutMs: 20_000 });
+			const code = res.status ?? 1;
+			worstExit = Math.max(worstExit, code);
+			const out = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`.trim();
+			if (out) chunks.push(`### codegraph ${sub} ${sym}\nexit_code=${code}\n${out}`);
+		}
+		raw = chunks.join("\n\n");
+	}
+	return { ok, raw, sym };
 }
 
 // ─── telemetry helper ───
@@ -203,6 +191,22 @@ export function toolSpecs() {
 				required: ["handle"],
 			},
 		},
+		{
+			name: "context_outline",
+			description:
+				"Symbol outline (kind/name/line range) for one file; bounded first step before Read; no codegraph needed.",
+			inputSchema: {
+				type: "object",
+				properties: {
+					file: { type: "string", description: "Project-relative file path" },
+					query: { type: "string", description: "Filter to symbols matching this substring" },
+					include_body: { type: "boolean", description: "Attach bounded body slices; default false" },
+					notable: { type: "boolean", description: "Drop private helpers and accessor boilerplate" },
+					engine: { type: "string", enum: ["builtin", "serena"], description: "Default builtin (zero-dependency)" },
+				},
+				required: ["file"],
+			},
+		},
 	];
 }
 
@@ -298,10 +302,29 @@ async function toolOrient(args, rt) {
 		);
 		return { content: [{ type: "text", text }] };
 	}
-	const t0 = performance.now();
-	const res = runCodegraph(cfg, ["explore", query]);
-	const exploreMs = Math.round(performance.now() - t0);
-	let raw = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`;
+	const mode = orientMode(cfg);
+	const tryFast = mode === "fast" || (mode === "auto" && isSimpleOrientSymbol(query));
+	let exploreMs = 0;
+	let orientPath = "explore";
+	let exitCode = 0;
+	let raw = "";
+	if (tryFast) {
+		const tFast = performance.now();
+		const fast = runOrientFast(cfg, query);
+		exploreMs = Math.round(performance.now() - tFast);
+		if (fast.ok) {
+			orientPath = "fast";
+			raw = fast.raw;
+		}
+	}
+	if (!raw) {
+		const t0 = performance.now();
+		const res = runCodegraph(cfg, ["explore", query]);
+		exploreMs = Math.round(performance.now() - t0);
+		orientPath = "explore";
+		exitCode = res.status ?? 1;
+		raw = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`;
+	}
 	// Cap before Output Gate — huge explore dumps dominate wall time.
 	const MAX_ORIENT_RAW_CHARS = 120_000;
 	if (raw.length > MAX_ORIENT_RAW_CHARS) {
@@ -309,12 +332,12 @@ async function toolOrient(args, rt) {
 	}
 	const gate = gateText(rt, {
 		raw,
-		cmd: `codegraph explore ${query}`,
+		cmd: `codegraph ${orientPath} ${query}`,
 		toolName: "context_orient",
 		surface: "orient",
-		exitCode: res.status,
+		exitCode,
 	});
-	const body = `exit_code=${res.status} explore_ms=${exploreMs}\n${gate.text}`;
+	const body = `exit_code=${exitCode} orient_path=${orientPath} explore_ms=${exploreMs}\n${gate.text}`;
 	if (okey) rt.seen?.touch(sessionId, "orient", okey, gate.handleId ?? null);
 	rt.cache?.store(cacheKey, {
 		handleId: gate.handleId ?? null,
@@ -574,6 +597,98 @@ async function toolFetch(args, rt) {
 	return { content: [{ type: "text", text: result.text }] };
 }
 
+// ─── context_outline (spec: .trae/documents/integrate-serena-symbol-outline.md) ───
+
+/**
+ * Symbol-level outline — Serena's core lesson re-derived with zero runtime
+ * dependencies: return the file's structure (kind + name_path + line range) so
+ * the agent can locate a target line instead of reading the whole file.
+ *
+ * The counterfactual is the full read (`raw`); everything is measured against
+ * it, and the ledger rule (raw >= emitted) is enforced before recording.
+ */
+async function toolOutline(args, rt) {
+	const cfg = rt.cfg;
+	const file = String(args?.file ?? "").trim();
+	if (!file) return { content: [{ type: "text", text: "file is required" }], isError: true };
+
+	const abs = inProject(cfg, file);
+	if (!abs) {
+		return {
+			content: [{ type: "text", text: statusText("OUT_OF_BOUNDS", `path escapes project root: ${file}`) }],
+			isError: true,
+		};
+	}
+
+	let stat;
+	try {
+		stat = statSync(abs);
+	} catch {
+		return { content: [{ type: "text", text: statusText("NOT_FOUND", `no such file: ${file}`) }], isError: true };
+	}
+	if (!stat.isFile()) {
+		return { content: [{ type: "text", text: statusText("NOT_FOUND", `not a regular file: ${file}`) }], isError: true };
+	}
+
+	// Return-side guard only: an oversized file is refused outright, never read
+	// into the body path, so "just look at the structure" cannot blow the window.
+	const outline = cfg.outline ?? {};
+	const maxInputBytes = Number(outline.max_input_bytes ?? 1_048_576);
+	if (stat.size > maxInputBytes) {
+		return {
+			content: [{
+				type: "text",
+				text: statusText("TOO_LARGE", `${stat.size} bytes > cap ${maxInputBytes}; use context_orient or Read with offset+limit.`),
+			}],
+			isError: true,
+		};
+	}
+
+	let source;
+	try {
+		source = readFileSync(abs, "utf8");
+	} catch (err) {
+		return { content: [{ type: "text", text: statusText("READ_FAILED", String(err?.message ?? err)) }], isError: true };
+	}
+
+	const rel = relative(resolve(cfg.project_root ?? process.cwd()), abs).replaceAll("\\", "/");
+	const rawTokens = countTokens(source);
+
+	// Engine selection (spec §5): serena is an optional, default-off adapter.
+	// When it is off the built-in scanner serves the call and the result shape
+	// never changes — a missing enhancement degrades the engine label, not the tool.
+	const engine =
+		args?.engine === "serena" && cfg.adapters?.serena?.enabled === true ? "builtin(serena_unbridged)" : "builtin";
+
+	const scan = scanSymbols(rel, source, { maxSymbols: Number(outline.max_symbols ?? 2000) });
+	const symbols = args?.notable === true ? filterNotable(scan.symbols) : scan.symbols;
+	const query = typeof args?.query === "string" ? args.query.trim() : "";
+	const lineCount = source.split("\n").length;
+
+	let text = `# ${rel} · ${engine} · s=${symbols.length} · L=${lineCount}\n${serializeOutline(symbols, source, {
+		query,
+		includeBody: args?.include_body === true,
+	})}`;
+
+	const maxTokens = Number(outline.max_tokens ?? 1600);
+	const clipped = countTokens(text) > maxTokens;
+	if (clipped) text = truncateToTokens(text, maxTokens);
+	if (scan.truncated || clipped) {
+		text += `\n[contextmind] truncated=${scan.truncated ? "symbols" : "tokens"}; narrow with query= or raise outline.max_tokens.`;
+	}
+
+	const emitted = countTokens(text);
+	record(rt, {
+		toolName: "context_outline",
+		contentType: "outline",
+		success: true,
+		rawTokens: Math.max(rawTokens, emitted),
+		emittedTokens: emitted,
+		note: `${symbols.length} symbols${query ? ` query=${query}` : ""}${args?.notable === true ? " notable" : ""}`,
+	});
+	return { content: [{ type: "text", text }] };
+}
+
 const HANDLERS = {
 	context_orient: toolOrient,
 	context_find: toolFind,
@@ -581,6 +696,7 @@ const HANDLERS = {
 	context_impact: toolImpact,
 	context_run: toolRun,
 	context_fetch: toolFetch,
+	context_outline: toolOutline,
 };
 
 /**
@@ -593,7 +709,11 @@ export async function callTool(name, args, rt) {
 		return { content: [{ type: "text", text: `unknown tool: ${name}` }], isError: true };
 	}
 	try {
-		return await handler(args ?? {}, rt);
+		// Normalise the success flag: a caller reads `isError` to tell a payload
+		// from a status, so every result states it explicitly rather than leaving
+		// the absence of the field to mean success. A handler's own `isError`
+		// wins, since it is spread last.
+		return { isError: false, ...(await handler(args ?? {}, rt)) };
 	} catch (err) {
 		return {
 			content: [{ type: "text", text: `${name} failed: ${err instanceof Error ? err.message : String(err)}` }],

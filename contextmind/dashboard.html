@@ -1,199 +1,604 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ContextMind Dashboard</title>
+<title>ContextMind · Token 账本</title>
 <style>
 	:root {
-		--bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
-		--dim: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
-		--yellow: #d29922; --purple: #bc8cff; --mono: ui-monospace, Consolas, monospace;
+		--bg: #f6f7f9;
+		--panel: #ffffff;
+		--panel-2: #fbfcfd;
+		--line: #e4e7ec;
+		--line-soft: #eef1f4;
+		--text: #1b1f24;
+		--muted: #6b7280;
+		--faint: #9aa3af;
+		--brand: #0b6bcb;
+		--brand-soft: #e8f1fd;
+		--ok: #0a8f3c;
+		--ok-soft: #e7f6ec;
+		--warn: #b45309;
+		--warn-soft: #fdf3e3;
+		--bad: #c0392b;
+		--bad-soft: #fdeceb;
+		--violet: #6f42c1;
+		--violet-soft: #f1ecfb;
+		--teal: #0f7b8a;
+		--teal-soft: #e6f4f6;
+		--mono: ui-monospace, "SF Mono", Consolas, "Cascadia Mono", monospace;
+		--shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
 	}
 	* { box-sizing: border-box; margin: 0; padding: 0; }
-	body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; padding: 24px; }
-	h1 { font-size: 20px; margin-bottom: 4px; }
-	h2 { font-size: 15px; margin: 28px 0 12px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-	.meta { color: var(--dim); font-size: 12px; margin-bottom: 20px; font-family: var(--mono); }
-	.grid { display: grid; gap: 12px; }
-	.cards { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
-	.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-	.card .label { color: var(--dim); font-size: 12px; }
-	.card .value { font-size: 26px; font-weight: 600; font-family: var(--mono); margin-top: 4px; }
-	.card .value.green { color: var(--green); }
-	.card .value.blue { color: var(--accent); }
-	.card .value.yellow { color: var(--yellow); }
-	.card .sub { color: var(--dim); font-size: 11px; margin-top: 4px; }
-	table { width: 100%; border-collapse: collapse; font-size: 13px; }
-	th { text-align: left; color: var(--dim); font-weight: 500; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-	td { padding: 6px 10px; border-bottom: 1px solid #21262d; font-family: var(--mono); font-size: 12px; }
-	tr:hover td { background: #1c2129; }
-	.bar { height: 6px; border-radius: 3px; background: #21262d; position: relative; min-width: 80px; }
-	.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--green); }
-	.bar > i.b { background: var(--accent); }
-	.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-family: var(--mono); }
-	.badge.ok { background: #1b3a25; color: var(--green); }
-	.badge.fail { background: #3d1d1f; color: var(--red); }
-	.badge.dedup { background: #2a2335; color: var(--purple); }
-	.badge.handle { background: #1b2f3a; color: var(--accent); }
-	.badge.read { background: #3a301b; color: var(--yellow); }
-	.badge.dim { background: #21262d; color: var(--dim); }
-	.controls { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-	.controls button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 14px; cursor: pointer; font-size: 12px; }
-	.controls button.active { border-color: var(--accent); color: var(--accent); }
-	.chart { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; }
-	svg text { fill: var(--dim); font-size: 10px; font-family: var(--mono); }
-	.timeline-wrap { max-height: 480px; overflow-y: auto; }
-	.empty { color: var(--dim); padding: 30px; text-align: center; }
-	#err { color: var(--red); font-family: var(--mono); display: none; margin: 12px 0; }
+	body {
+		background: var(--bg); color: var(--text); padding: 22px 26px 60px;
+		font: 13.5px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+	/* ── top bar ── */
+	.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+	.brand { display: flex; align-items: center; gap: 12px; }
+	.logo {
+		width: 38px; height: 38px; border-radius: 10px; flex: none;
+		background: linear-gradient(135deg, #0b6bcb, #12a5c8); color: #fff;
+		display: grid; place-items: center; font: 700 13px/1 var(--mono); letter-spacing: .5px;
+		box-shadow: 0 2px 6px rgba(11,107,203,.28);
+	}
+	h1 { font-size: 17px; font-weight: 650; letter-spacing: -.2px; }
+	.meta { color: var(--muted); font-size: 11.5px; font-family: var(--mono); margin-top: 2px; }
+	.actions { display: flex; align-items: center; gap: 10px; }
+	.live { color: var(--ok); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+	.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; animation: pulse 1.8s ease-in-out infinite; }
+	@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+	button {
+		background: var(--panel); color: var(--text); border: 1px solid var(--line);
+		border-radius: 7px; padding: 6px 13px; font-size: 12.5px; cursor: pointer;
+		box-shadow: var(--shadow); transition: border-color .15s, color .15s;
+	}
+	button:hover { border-color: var(--brand); color: var(--brand); }
+
+	/* ── sections ── */
+	section { margin-bottom: 26px; }
+	h2 {
+		font-size: 13.5px; font-weight: 650; margin-bottom: 10px;
+		display: flex; align-items: baseline; gap: 9px; color: var(--text);
+	}
+	h2 .hint { font-weight: 400; font-size: 11.5px; color: var(--faint); }
+	.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+	@media (max-width: 980px) { .two-col { grid-template-columns: 1fr; } }
+
+	.panel {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+		box-shadow: var(--shadow); padding: 14px 16px; overflow: hidden;
+	}
+	.panel.scroll { max-height: 460px; overflow-y: auto; }
+	.panel + .panel { margin-top: 12px; }
+
+	/* ── KPI cards ── */
+	.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 12px; }
+	.kpi {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+		padding: 13px 15px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+	}
+	.kpi::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--line); }
+	.kpi.ok::after { background: var(--ok); }
+	.kpi.brand::after { background: var(--brand); }
+	.kpi.warn::after { background: var(--warn); }
+	.kpi.violet::after { background: var(--violet); }
+	.kpi.teal::after { background: var(--teal); }
+	.kpi .label { color: var(--muted); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
+	.kpi .value { font-size: 25px; font-weight: 650; font-family: var(--mono); font-variant-numeric: tabular-nums; margin-top: 5px; letter-spacing: -.6px; }
+	.kpi .value.ok { color: var(--ok); }
+	.kpi .value.brand { color: var(--brand); }
+	.kpi .value.warn { color: var(--warn); }
+	.kpi .value.violet { color: var(--violet); }
+	.kpi .value.teal { color: var(--teal); }
+	.kpi .sub { color: var(--faint); font-size: 11px; margin-top: 4px; font-family: var(--mono); }
+
+	/* ── tables ── */
+	table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+	th {
+		text-align: right; color: var(--muted); font-weight: 550; font-size: 11px;
+		padding: 7px 9px; border-bottom: 1px solid var(--line); white-space: nowrap;
+		text-transform: uppercase; letter-spacing: .3px;
+	}
+	th:first-child, td:first-child { text-align: left; }
+	td { padding: 7px 9px; border-bottom: 1px solid var(--line-soft); text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+	td.l { text-align: left; font-family: inherit; }
+	tbody tr:hover td { background: var(--panel-2); }
+	tbody tr:last-child td { border-bottom: none; }
+	td .ellip { display: inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+	.green { color: var(--ok); }
+	.blue { color: var(--brand); }
+	.amber { color: var(--warn); }
+	.red { color: var(--bad); }
+	.dim { color: var(--faint); }
+
+	/* ── bars ── */
+	.bar { height: 6px; border-radius: 3px; background: var(--line-soft); position: relative; min-width: 62px; }
+	.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--brand); }
+	.bar > i.ok { background: var(--ok); }
+	.bar > i.warn { background: var(--warn); }
+
+	/* ── chips ── */
+	.chip {
+		display: inline-block; padding: 1.5px 7px; border-radius: 999px;
+		font-size: 10.5px; font-family: var(--mono); white-space: nowrap;
+	}
+	.chip.ok { background: var(--ok-soft); color: var(--ok); }
+	.chip.bad { background: var(--bad-soft); color: var(--bad); }
+	.chip.warn { background: var(--warn-soft); color: var(--warn); }
+	.chip.dedup { background: var(--violet-soft); color: var(--violet); }
+	.chip.handle { background: var(--brand-soft); color: var(--brand); }
+	.chip.read { background: var(--warn-soft); color: var(--warn); }
+	.chip.dim { background: var(--line-soft); color: var(--muted); }
+
+	/* ── tabs ── */
+	.tabs { display: flex; gap: 7px; margin-bottom: 11px; flex-wrap: wrap; }
+	.tabs button { padding: 5px 15px; font-size: 12.5px; }
+	.tabs button.active { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+
+	/* ── charts ── */
+	.chart-scroll { overflow-x: auto; padding-bottom: 4px; }
+	svg text { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+	.legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 11.5px; color: var(--muted); }
+	.legend span { display: inline-flex; align-items: center; gap: 6px; }
+	.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+	/* ── savings breakdown ── */
+	.savings-row { display: grid; grid-template-columns: 168px 1fr 92px 60px; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+	.savings-row:last-child { border-bottom: none; }
+	.savings-row .name { font-size: 12.5px; display: flex; align-items: center; gap: 7px; }
+	.savings-row .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+	.savings-row .tok { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+	.savings-row .share { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+	/* ── hits ── */
+	.hit-grid { display: grid; grid-template-columns: 190px 1fr; gap: 20px; align-items: center; }
+	@media (max-width: 720px) { .hit-grid { grid-template-columns: 1fr; } }
+	.hit-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+	.hit-item { border: 1px solid var(--line-soft); border-radius: 9px; padding: 9px 12px; background: var(--panel-2); }
+	.hit-item .k { color: var(--muted); font-size: 11.5px; }
+	.hit-item .v { font-family: var(--mono); font-size: 17px; font-weight: 600; margin-top: 2px; }
+	.hit-item .s { color: var(--faint); font-size: 10.5px; margin-top: 2px; }
+
+	.empty { color: var(--faint); padding: 26px; text-align: center; font-size: 12.5px; }
+	.err {
+		background: var(--bad-soft); border: 1px solid #f3c9c4; color: var(--bad);
+		border-radius: 9px; padding: 11px 14px; margin-bottom: 18px; font-size: 12.5px; font-family: var(--mono);
+	}
+	.note { color: var(--faint); font-size: 11px; margin-top: 8px; }
 </style>
 </head>
 <body>
-<h1>ContextMind · Token 账本</h1>
-<div class="meta" id="meta">loading…</div>
-<div id="err"></div>
 
-<div class="grid cards" id="cards"></div>
-
-<h2>时间维度（时 / 日 / 周 / 月 / 年）</h2>
-<div class="controls" id="period-tabs"></div>
-<div class="chart" id="period-chart"></div>
-
-<h2>按工具</h2>
-<div class="chart"><table id="by-tool"></table></div>
-
-<div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:0">
-	<div style="margin-right:12px"><h2 style="margin-top:28px">按来源 surface</h2><div class="chart"><table id="by-surface"></table></div></div>
-	<div><h2 style="margin-top:28px">按内容类型</h2><div class="chart"><table id="by-content"></table></div></div>
+<div class="topbar">
+	<div class="brand">
+		<div class="logo">CM</div>
+		<div>
+			<h1>ContextMind · Token 账本</h1>
+			<div class="meta" id="meta">加载中…</div>
+		</div>
+	</div>
+	<div class="actions">
+		<span class="live"><i></i>实时</span>
+		<button id="refresh">立即刷新</button>
+	</div>
 </div>
 
-<h2>事件时间线（每次请求：几点几分 · 干了什么 · 省多少 · 缓存命中没）</h2>
-<div class="chart timeline-wrap"><table id="events"></table></div>
+<div class="err" id="err" hidden></div>
 
-<h2>按 Adapter（上游命令）</h2>
-<div class="chart"><table id="by-adapter"></table></div>
+<section>
+	<h2>总览 <span class="hint">原始 / 实际发出 / 节省 / 拦截</span></h2>
+	<div class="kpis" id="kpis"></div>
+</section>
+
+<section>
+	<h2>节约来源分解 <span class="hint">省下来的 token 到底从哪来，占多少</span></h2>
+	<div class="panel" id="savings"></div>
+	<div class="note" id="savings-note"></div>
+</section>
+
+<section>
+	<h2>命中与未命中 <span class="hint">去重 / handle / 读取拦截 / 适配器缺失</span></h2>
+	<div class="panel" id="hits"></div>
+</section>
+
+<section>
+	<h2>时间维度 <span class="hint">按 时 / 日 / 周 / 月 / 年 聚合</span></h2>
+	<div class="tabs" id="period-tabs"></div>
+	<div class="panel">
+		<div class="chart-scroll" id="period-chart"></div>
+		<div class="legend">
+			<span><i style="background:#0a8f3c"></i>节省 avoided</span>
+			<span><i style="background:#0b6bcb"></i>实际发出 emitted</span>
+			<span><i style="background:#b45309"></i>防读 prevented</span>
+		</div>
+	</div>
+	<div class="panel"><table id="period-table"></table></div>
+</section>
+
+<section>
+	<h2>消耗大户 Top 15 <span class="hint">原始 token 最高的请求 —— 优化先看这里</span></h2>
+	<div class="panel"><table id="top-consumers"></table></div>
+</section>
+
+<section>
+	<h2>未节约事件 <span class="hint">为什么没省下来：逐条给原因</span></h2>
+	<div class="panel scroll"><table id="no-saving"></table></div>
+</section>
+
+<section class="two-col">
+	<div>
+		<h2>按工具 <span class="hint">tool_name</span></h2>
+		<div class="panel"><table id="by-tool"></table></div>
+	</div>
+	<div>
+		<h2>按来源 <span class="hint">surface</span></h2>
+		<div class="panel"><table id="by-surface"></table></div>
+	</div>
+</section>
+
+<section class="two-col">
+	<div>
+		<h2>按压缩层 <span class="hint">first_layer</span></h2>
+		<div class="panel"><table id="by-layer"></table></div>
+	</div>
+	<div>
+		<h2>按内容类型 <span class="hint">content_type</span></h2>
+		<div class="panel"><table id="by-content"></table></div>
+	</div>
+</section>
+
+<section class="two-col">
+	<div>
+		<h2>按适配器 <span class="hint">adapter_used</span></h2>
+		<div class="panel"><table id="by-adapter"></table></div>
+	</div>
+	<div>
+		<h2>按会话 <span class="hint">session_id</span></h2>
+		<div class="panel"><table id="by-session"></table></div>
+	</div>
+</section>
+
+<section>
+	<h2>事件时间线 <span class="hint">每条请求：时间 · 工具 · 干了什么 · 省多少 · 命中没</span></h2>
+	<div class="panel scroll"><table id="events"></table></div>
+</section>
 
 <script>
-const fmt = (n) => (n ?? 0).toLocaleString("en-US");
-const pct = (r) => (r === null || r === undefined) ? "—" : (r * 100).toFixed(1) + "%";
-const $ = (id) => document.getElementById(id);
-let DATA = null;
-let periodKey = "hour";
+"use strict";
 
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+// ── 常量 ──
+var LAYER_COLORS = ["#0a8f3c", "#0b6bcb", "#0f7b8a", "#6f42c1", "#b45309", "#c0392b", "#5b6b7c"];
+var CH = { ok: "#0a8f3c", brand: "#0b6bcb", warn: "#b45309", bad: "#c0392b", violet: "#6f42c1", teal: "#0f7b8a", line: "#e4e7ec", soft: "#eef1f4", muted: "#6b7280", text: "#1b1f24" };
 
+// ── 小工具 ──
+function fmt(n) { return (n == null ? 0 : Number(n)).toLocaleString("en-US"); }
+function pct(r, digits) { return (r == null || !isFinite(r)) ? "—" : (r * 100).toFixed(digits == null ? 1 : digits) + "%"; }
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+	return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+		return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+	});
+}
 function localTime(iso) {
-	const d = new Date(iso);
-	const pad = (x) => String(x).padStart(2, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+	var d = new Date(iso);
+	if (isNaN(d.getTime())) return String(iso == null ? "—" : iso);
+	var p = function (x) { return String(x).padStart(2, "0"); };
+	return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " +
+		p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+/** 把最大值向上取整到一个好看的刻度。 */
+function niceMax(v) {
+	if (!v || v <= 0) return 1;
+	var mag = Math.pow(10, Math.floor(Math.log10(v)));
+	var n = v / mag;
+	var step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
+	return step * mag;
+}
+function emptyBox(msg) { return '<div class="empty">' + esc(msg) + "</div>"; }
+
+var DATA = null;
+var periodKey = "hour";
+
+// ── 总览卡片 ──
+function renderKpis() {
+	var t = DATA.totals;
+	var h = DATA.hits || {};
+	var totalSaved = (t.avoided || 0) + (t.prevented || 0) + (t.proxy || 0);
+	var successRate = t.events > 0 ? t.successes / t.events : null;
+	var cards = [
+		{ label: "RAW 原始", value: fmt(t.raw), cls: "brand", sub: "本应进入模型窗口的 token" },
+		{ label: "EMITTED 实际发出", value: fmt(t.emitted), cls: "", sub: "平均 gate 延迟 " + (t.avg_gate_ms ? t.avg_gate_ms.toFixed(0) + "ms" : "—") },
+		{ label: "节省合计", value: fmt(totalSaved), cls: "ok", sub: "压缩率 " + pct(t.raw > 0 ? totalSaved / t.raw : null) + " · 对比原始" },
+		{ label: "压缩节省", value: fmt(t.avoided), cls: "ok", sub: "工具输出压缩（avoided）" },
+		{ label: "防读拦截", value: fmt(t.prevented), cls: "warn", sub: "Read Guard 拦下的整读，独立列" },
+		{ label: "PROXY 节省", value: fmt(t.proxy), cls: "violet", sub: "代理层未进入窗口的 token" },
+		{ label: "请求次数", value: fmt(t.events), cls: "", sub: "成功 " + fmt(t.successes) + " · 成功率 " + pct(successRate) },
+		{ label: "去重命中", value: fmt(t.dedup_hits), cls: "teal", sub: "占全部请求 " + pct(h.events > 0 ? t.dedup_hits / h.events : null) }
+	];
+	$("kpis").innerHTML = cards.map(function (c) {
+		return '<div class="kpi ' + c.cls + '">' +
+			'<div class="label">' + esc(c.label) + "</div>" +
+			'<div class="value ' + c.cls + '">' + c.value + "</div>" +
+			'<div class="sub">' + esc(c.sub) + "</div></div>";
+	}).join("");
 }
 
+// ── 节约来源分解 ──
+function renderSavings() {
+	var s = DATA.savings;
+	var rows = [];
+	var i = 0;
+	for (var layer of (s.byLayer || [])) {
+		rows.push({ name: "压缩 · " + layer.key, color: LAYER_COLORS[i % LAYER_COLORS.length], tok: layer.avoided, events: layer.events, note: "raw " + fmt(layer.raw) + " → " + fmt(layer.emitted) });
+		i++;
+	}
+	if (s.prevented && s.prevented.tokens > 0) rows.push({ name: "防读 · Read Guard", color: CH.warn, tok: s.prevented.tokens, events: s.prevented.events, note: "整读被拦，token 从未进入窗口" });
+	if (s.proxy && s.proxy.tokens > 0) rows.push({ name: "代理 · proxy 层", color: CH.violet, tok: s.proxy.tokens, events: s.proxy.events, note: "proxy 侧节省，独立计量" });
+
+	if (!rows.length) {
+		$("savings").innerHTML = emptyBox("还没有产生节省的事件。跑几轮真实请求后再看这里。");
+		$("savings-note").textContent = "";
+		return;
+	}
+	var total = rows.reduce(function (a, r) { return a + (r.tok || 0); }, 0);
+	var max = Math.max.apply(null, rows.map(function (r) { return r.tok || 0; }));
+	var html = rows.map(function (r) {
+		var share = total > 0 ? r.tok / total : 0;
+		var width = max > 0 ? (r.tok / max) * 100 : 0;
+		return '<div class="savings-row">' +
+			'<div class="name"><span class="dot" style="background:' + r.color + '"></span>' + esc(r.name) + "</div>" +
+			'<div class="bar" title="' + esc(r.note) + '"><i style="width:' + width.toFixed(1) + "%;background:" + r.color + '"></i></div>' +
+			'<div class="tok">' + fmt(r.tok) + "</div>" +
+			'<div class="share">' + pct(share) + "</div>" +
+			"</div>";
+	}).join("");
+	$("savings").innerHTML = html;
+	$("savings-note").textContent = "合计节省 " + fmt(total) + " token。三个通道互斥计量（telemetry 侧已保证），相加不会重复计数。";
+}
+
+// ── 命中 / 未命中 ──
+function renderHits() {
+	var t = DATA.totals, h = DATA.hits || {};
+	var events = h.events || 0;
+	var hitRate = events > 0 ? (h.dedup_hits || 0) / events : null;
+	var fetched = h.handles_fetched || 0;
+	var created = h.handles_created || 0;
+	var fetchRate = created > 0 ? fetched / created : null;
+
+	var donut = donutSvg(hitRate, "去重命中率", CH.violet);
+	var items = [
+		{ k: "去重命中 / 未命中", v: fmt(h.dedup_hits) + " / " + fmt(events - (h.dedup_hits || 0)), s: "dedup_hit", c: CH.violet },
+		{ k: "handle 建立 / 回取", v: fmt(created) + " / " + fmt(fetched), s: "回取率 " + pct(fetchRate) + " · 建了不取=白存", c: CH.brand },
+		{ k: "读取拦截 / 用户 override", v: fmt(h.reads_blocked) + " / " + fmt(h.overrides), s: "override 越多说明拦截越激进", c: CH.warn },
+		{ k: "适配器缺失事件", v: fmt(h.adapter_missing), s: "adapter_missing 非空", c: CH.bad },
+		{ k: "成功 / 失败", v: fmt(h.successes) + " / " + fmt(events - (h.successes || 0)), s: "success=0 的请求", c: CH.ok }
+	];
+	var list = items.map(function (it) {
+		return '<div class="hit-item"><div class="k">' + esc(it.k) + "</div>" +
+			'<div class="v" style="color:' + it.c + '">' + it.v + "</div>" +
+			'<div class="s">' + esc(it.s) + "</div></div>";
+	}).join("");
+	$("hits").innerHTML = '<div class="hit-grid"><div>' + donut + "</div><div class=\"hit-list\">" + list + "</div></div>";
+}
+
+function donutSvg(rate, label, color) {
+	var r = 52, sw = 13, size = 140, cx = size / 2, cy = size / 2;
+	var circ = 2 * Math.PI * r;
+	var p = Math.max(0, Math.min(1, rate == null ? 0 : rate));
+	var dash = circ * p;
+	return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + " " + size + '">' +
+		'<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + CH.soft + '" stroke-width="' + sw + '"/>' +
+		'<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + sw + '"' +
+		' stroke-dasharray="' + dash.toFixed(2) + " " + (circ - dash).toFixed(2) + '" stroke-linecap="round" transform="rotate(-90 ' + cx + " " + cy + ')"/>' +
+		'<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" style="font-size:19px;font-weight:650" fill="' + CH.text + '">' + pct(rate, 0) + "</text>" +
+		'<text x="' + cx + '" y="' + (cy + 15) + '" text-anchor="middle" style="font-size:10px" fill="' + CH.muted + '">' + esc(label) + "</text>" +
+		"</svg>";
+}
+
+// ── 时间维度 ──
+function renderPeriod() {
+	var tabs = $("period-tabs");
+	var periods = DATA.periods || {};
+	var keys = Object.keys(periods);
+	if (!keys.length) { tabs.innerHTML = ""; $("period-chart").innerHTML = emptyBox("无时间数据"); $("period-table").innerHTML = ""; return; }
+	if (!periods[periodKey]) periodKey = keys[0];
+	tabs.innerHTML = keys.map(function (k) {
+		return '<button class="' + (k === periodKey ? "active" : "") + '" data-k="' + esc(k) + '">' + esc(periods[k].label) + "</button>";
+	}).join("");
+	var buckets = periods[periodKey].buckets || [];
+	$("period-chart").innerHTML = buckets.length ? stackedBarChart(buckets) : emptyBox("该粒度暂无数据");
+	$("period-table").innerHTML = periodTable(buckets);
+}
+
+function stackedBarChart(buckets) {
+	var PAD_L = 58, PAD_R = 14, PAD_T = 14, PAD_B = 46;
+	var BW = 40, GAP = 30;
+	var plotH = 210;
+	var W = Math.max(640, PAD_L + buckets.length * (BW + GAP) + PAD_R);
+	var H = plotH + PAD_T + PAD_B;
+	var baseY = PAD_T + plotH;
+	var max = niceMax(Math.max.apply(null, buckets.map(function (b) { return Math.max(b.raw || 0, (b.avoided || 0) + (b.emitted || 0)); })) || 1);
+	var y = function (v) { return baseY - (plotH * (v / max)); };
+
+	var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '">';
+	// 网格 + Y 轴
+	for (var g = 0; g <= 4; g++) {
+		var v = (max / 4) * g;
+		var yy = y(v);
+		svg += '<line x1="' + PAD_L + '" y1="' + yy.toFixed(1) + '" x2="' + (W - PAD_R) + '" y2="' + yy.toFixed(1) + '" stroke="' + (g === 0 ? CH.line : CH.soft) + '"/>';
+		svg += '<text x="' + (PAD_L - 8) + '" y="' + (yy + 3.5).toFixed(1) + '" text-anchor="end">' + fmt(Math.round(v)) + "</text>";
+	}
+	buckets.forEach(function (b, i) {
+		var x = PAD_L + 12 + i * (BW + GAP);
+		var hA = plotH * ((b.avoided || 0) / max);
+		var hE = plotH * ((b.emitted || 0) / max);
+		var yA = baseY - hA;
+		var yE = yA - hE;
+		var tip = esc(b.bucket) + "\nraw " + fmt(b.raw) + " · emitted " + fmt(b.emitted) + "\navoided " + fmt(b.avoided) + " (" + pct(b.ratio) + ")\n防读 " + fmt(b.prevented) + " · 事件 " + fmt(b.events);
+		svg += '<rect x="' + x + '" y="' + yA.toFixed(1) + '" width="' + BW + '" height="' + Math.max(0, hA).toFixed(1) + '" fill="' + CH.ok + '" rx="2"><title>' + tip + "</title></rect>";
+		svg += '<rect x="' + x + '" y="' + yE.toFixed(1) + '" width="' + BW + '" height="' + Math.max(0, hE).toFixed(1) + '" fill="' + CH.brand + '" rx="2"><title>' + tip + "</title></rect>";
+		var hP = plotH * ((b.prevented || 0) / max);
+		if (hP > 0.5) {
+			svg += '<rect x="' + (x + BW * 0.3) + '" y="' + (baseY - hP).toFixed(1) + '" width="' + (BW * 0.4) + '" height="' + hP.toFixed(1) + '" fill="' + CH.warn + '" rx="2" opacity="0.85"><title>' + tip + "</title></rect>";
+		}
+		if (b.avoided > 0) {
+			svg += '<text x="' + (x + BW / 2) + '" y="' + (yE - 5).toFixed(1) + '" text-anchor="middle" fill="' + CH.ok + '" style="font-size:9.5px">' + fmt(b.avoided) + "</text>";
+		}
+		var lbl = String(b.bucket);
+		if (lbl.length > 11) lbl = lbl.slice(5);
+		svg += '<text x="' + (x + BW / 2) + '" y="' + (baseY + 16) + '" text-anchor="middle" transform="rotate(-32 ' + (x + BW / 2) + " " + (baseY + 16) + ')">' + esc(lbl) + "</text>";
+	});
+	svg += "</svg>";
+	return svg;
+}
+
+function periodTable(buckets) {
+	if (!buckets.length) return "";
+	var head = "<tr><th>时间段</th><th>事件</th><th>raw</th><th>emitted</th><th>节省</th><th>压缩率</th><th>防读</th><th>去重</th><th>平均延迟</th></tr>";
+	var rows = buckets.map(function (b) {
+		return "<tr><td class='l'>" + esc(b.bucket) + "</td><td>" + fmt(b.events) + "</td><td>" + fmt(b.raw) + "</td><td>" +
+			fmt(b.emitted) + "</td><td class='green'>" + fmt(b.avoided) + "</td><td>" + pct(b.ratio) + "</td><td class='amber'>" +
+			fmt(b.prevented) + "</td><td>" + fmt(b.dedup) + "</td><td class='dim'>" + (b.avg_gate_ms ? b.avg_gate_ms.toFixed(1) + "ms" : "—") + "</td></tr>";
+	}).join("");
+	return head + rows;
+}
+
+// ── 通用分组表 ──
+function groupTable(id, rows, opts) {
+	opts = opts || {};
+	var el = $(id);
+	if (!rows || !rows.length) { el.innerHTML = emptyBox(opts.empty || "暂无数据"); return; }
+	var maxRaw = Math.max.apply(null, rows.map(function (r) { return r.raw || 0; })) || 1;
+	var head = "<tr><th>" + esc(opts.keyLabel || "键") + "</th><th>事件</th><th>raw</th><th>emitted</th><th>节省</th><th>压缩率</th><th>防读</th><th>去重</th>" +
+		(opts.showLatency ? "<th>延迟</th>" : "") + '<th style="width:14%">占 raw</th></tr>';
+	var body = rows.map(function (r) {
+		var share = DATA.totals.raw > 0 ? (r.raw || 0) / DATA.totals.raw : 0;
+		var w = ((r.raw || 0) / maxRaw) * 100;
+		return "<tr><td class='l'>" + esc(r.key) + "</td><td>" + fmt(r.events) + "</td><td>" + fmt(r.raw) + "</td><td>" +
+			fmt(r.emitted) + "</td><td class='green'>" + fmt(r.avoided) + "</td><td>" + pct(r.ratio) + "</td><td class='amber'>" +
+			fmt(r.prevented) + "</td><td>" + fmt(r.dedup) + "</td>" +
+			(opts.showLatency ? "<td class='dim'>" + (r.avg_gate_ms ? r.avg_gate_ms.toFixed(1) + "ms" : "—") + "</td>" : "") +
+			'<td><div class="bar"><i style="width:' + w.toFixed(1) + '%"></i></div></td></tr>';
+	}).join("");
+	el.innerHTML = head + body;
+}
+
+// ── 消耗大户 ──
+function renderTopConsumers() {
+	var rows = DATA.topConsumers || [];
+	if (!rows.length) { $("top-consumers").innerHTML = emptyBox("暂无消耗记录"); return; }
+	var maxRaw = Math.max.apply(null, rows.map(function (r) { return r.raw_tokens || 0; })) || 1;
+	var head = "<tr><th>时间</th><th>工具</th><th>来源</th><th>内容类型</th><th>压缩层</th><th>raw</th><th>emitted</th><th>节省</th><th>压缩率</th><th>诊断</th></tr>";
+	var body = rows.map(function (r) {
+		var saved = r.tool_emitted_savings || 0;
+		var ratio = r.raw_tokens > 0 ? saved / r.raw_tokens : 0;
+		var w = ((r.raw_tokens || 0) / maxRaw) * 100;
+		var diag = saved > 0
+			? '<span class="chip ok">已省 ' + pct(ratio) + "</span>"
+			: (r.prevented_read_tokens > 0 ? '<span class="chip warn">防读 ' + fmt(r.prevented_read_tokens) + "</span>"
+				: (r.adapter_missing ? '<span class="chip bad">缺 ' + esc(r.adapter_missing) + "</span>" : '<span class="chip dim">未省</span>'));
+		return "<tr><td>" + localTime(r.ts) + "</td><td>" + esc(r.tool_name || "—") + "</td><td class='l'>" + esc(r.surface || "—") +
+			"</td><td>" + esc(r.content_type || "—") + "</td><td class='dim'>" + esc(r.first_layer || "—") + "</td><td>" + fmt(r.raw_tokens) +
+			"</td><td>" + fmt(r.emitted_tokens) + "</td><td class='green'>" + fmt(saved) + "</td><td>" + pct(ratio) + "</td><td class='l'>" + diag + "</td></tr>";
+	}).join("");
+	$("top-consumers").innerHTML = head + body;
+}
+
+/** 给一条未节约事件推断原因，便于日后调参。 */
+function noSavingReason(r) {
+	if (r.adapter_missing) return "适配器缺失：" + r.adapter_missing + " → 走了降级路径";
+	if (!r.content_type) return "内容类型未知 → 分类器没给策略";
+	if (!r.first_layer) return "未进入任何压缩层";
+	if (r.surface === "proxy") return "proxy 事件，节省记在 proxy 列";
+	if (r.note && /budget/i.test(r.note)) return "已在预算内，无需压缩";
+	if ((r.emitted_tokens || 0) >= (r.raw_tokens || 0)) return "压缩无收益（载荷已很紧凑或全为不可压缩结构）";
+	return "压缩后未变小";
+}
+
+function renderNoSaving() {
+	var rows = DATA.noSaving || [];
+	if (!rows.length) { $("no-saving").innerHTML = emptyBox("没有未节约事件 —— 每一条请求都省到了。"); return; }
+	var head = "<tr><th>时间</th><th>工具</th><th>来源</th><th>内容类型</th><th>压缩层</th><th>raw → emitted</th><th>原因</th></tr>";
+	var body = rows.map(function (r) {
+		return "<tr><td>" + localTime(r.ts) + "</td><td>" + esc(r.tool_name || "—") + "</td><td class='l'>" + esc(r.surface || "—") +
+			"</td><td>" + esc(r.content_type || "—") + "</td><td class='dim'>" + esc(r.first_layer || "—") + "</td><td>" +
+			fmt(r.raw_tokens) + " → " + fmt(r.emitted_tokens) + "</td><td class='l dim'>" + esc(noSavingReason(r)) + "</td></tr>";
+	}).join("");
+	$("no-saving").innerHTML = head + body;
+}
+
+// ── 事件时间线 ──
+function renderEvents() {
+	var el = $("events");
+	var rows = DATA.events || [];
+	if (!rows.length) { el.innerHTML = emptyBox("暂无事件"); return; }
+	var head = "<tr><th>时间</th><th>工具</th><th>来源</th><th>干了什么</th><th>raw → emitted</th><th>节省</th><th>标记</th></tr>";
+	var body = rows.map(function (e) {
+		var badges = [];
+		if (e.dedup_hit) badges.push('<span class="chip dedup">去重命中</span>');
+		if (e.handle_created) badges.push('<span class="chip handle">建 handle ' + esc(e.handle_id || "") + "</span>");
+		if (e.handle_fetched) badges.push('<span class="chip handle">取回 ' + esc(e.handle_id || "") + "</span>");
+		if (e.read_blocked) badges.push('<span class="chip read">拦截读取</span>');
+		if (e.read_override) badges.push('<span class="chip warn">override</span>');
+		if (e.adapter_missing) badges.push('<span class="chip bad">缺 ' + esc(e.adapter_missing) + "</span>");
+		if (e.success === 0) badges.push('<span class="chip bad">失败</span>');
+		else if (!badges.length) badges.push('<span class="chip ok">成功</span>');
+		var what = e.adapter_used || e.note || e.surface || "";
+		var saved = e.tool_emitted_savings
+			? fmt(e.tool_emitted_savings)
+			: (e.prevented_read_tokens ? "(" + fmt(e.prevented_read_tokens) + " 防读)" : "—");
+		return "<tr><td>" + localTime(e.ts) + "</td><td>" + esc(e.tool_name || "—") + "</td><td class='l dim'>" + esc(e.surface || "—") +
+			"</td><td class='l'><span class='ellip' title='" + esc(what) + "'>" + esc(what) + "</span></td><td>" +
+			fmt(e.raw_tokens) + " → " + fmt(e.emitted_tokens) + "</td><td class='green'>" + saved + "</td><td class='l'>" + badges.join(" ") + "</td></tr>";
+	}).join("");
+	el.innerHTML = head + body;
+}
+
+// ── 主渲染 ──
 function render() {
 	if (!DATA) return;
-	const t = DATA.totals;
-	$("meta").textContent = `${DATA.project} · tokenizer ${DATA.tokenizer} · 生成于 ${localTime(DATA.generated_at)} · 每 15s 自动刷新`;
-	$("cards").innerHTML = [
-		card("RAW（原始）", fmt(t.raw), "blue", "本应进入模型窗口的 token"),
-		card("EMITTED（实际发出）", fmt(t.emitted), "", `平均 gate 延迟 ${t.avg_gate_ms ? t.avg_gate_ms.toFixed(0) + "ms" : "—"}`),
-		card("AVOIDED（节省）", fmt(t.avoided), "green", `压缩率 ${pct(t.raw > 0 ? t.avoided / t.raw : null)}`),
-		card("PREVENTED READ", fmt(t.prevented), "yellow", "Read Guard 拦截（独立列，不混账）"),
-		card("请求次数", fmt(t.events), "", `成功 ${t.successes} · 失败 ${t.events - t.successes}`),
-		card("Handle", `${t.handles_created} 建了 / ${t.handles_fetched} 取回`, "", `dedup 命中 ${t.dedup_hits} · 拦读 ${t.reads_blocked}`),
-	].join("");
-
+	$("meta").textContent = DATA.project + " · tokenizer " + DATA.tokenizer + " · 生成于 " + localTime(DATA.generated_at);
+	renderKpis();
+	renderSavings();
+	renderHits();
 	renderPeriod();
-	renderGroupTable("by-tool", DATA.byTool, true);
-	renderGroupTable("by-surface", DATA.bySurface);
-	renderGroupTable("by-content", DATA.byContentType);
-	renderGroupTable("by-adapter", DATA.byAdapter);
+	renderTopConsumers();
+	renderNoSaving();
+	groupTable("by-tool", DATA.byTool, { keyLabel: "工具", showLatency: true });
+	groupTable("by-surface", DATA.bySurface, { keyLabel: "来源" });
+	groupTable("by-layer", DATA.byLayer, { keyLabel: "压缩层", showLatency: true, empty: "还没有走压缩层的事件" });
+	groupTable("by-content", DATA.byContentType, { keyLabel: "内容类型" });
+	groupTable("by-adapter", DATA.byAdapter, { keyLabel: "适配器" });
+	groupTable("by-session", DATA.bySession, { keyLabel: "会话" });
 	renderEvents();
-}
-
-function card(label, value, cls, sub) {
-	return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="sub">${sub}</div></div>`;
-}
-
-function renderPeriod() {
-	const tabs = $("period-tabs");
-	tabs.innerHTML = Object.entries(DATA.periods)
-		.map(([k, p]) => `<button class="${k === periodKey ? "active" : ""}" onclick="setPeriod('${k}')">${p.label}</button>`)
-		.join("");
-	const buckets = DATA.periods[periodKey].buckets;
-	$("period-chart").innerHTML = buckets.length
-		? barChart(buckets)
-		: `<div class="empty">该粒度暂无数据</div>`;
-}
-
-function setPeriod(k) { periodKey = k; renderPeriod(); }
-
-/** Hand-rolled grouped bar chart: avoided (green, stacked bottom) + emitted (blue, top). */
-function barChart(buckets) {
-	const W = Math.max(700, buckets.length * 90), H = 220, PAD = 34, BW = 34, GAP = 56;
-	const max = Math.max(1, ...buckets.map(b => b.raw));
-	const scale = (v) => (H - PAD - 18) * (v / max);
-	let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
-	svg += `<line x1="${PAD}" y1="${H - 18}" x2="${W - 5}" y2="${H - 18}" stroke="#30363d"/>`;
-	buckets.forEach((b, i) => {
-		const x = PAD + 10 + i * (BW + GAP);
-		const hA = scale(b.avoided), hE = scale(b.emitted);
-		const yA = H - 18 - hA, yE = yA - hE;
-		svg += `<rect x="${x}" y="${yA}" width="${BW}" height="${Math.max(0, hA)}" fill="#3fb950" rx="2"><title>${esc(b.bucket)}\navoided ${fmt(b.avoided)} tok (${pct(b.ratio)})</title></rect>`;
-		svg += `<rect x="${x}" y="${yE}" width="${BW}" height="${Math.max(0, hE)}" fill="#58a6ff" rx="2"><title>${esc(b.bucket)}\nemitted ${fmt(b.emitted)} tok</title></rect>`;
-		svg += `<text x="${x + BW / 2}" y="${H - 5}" text-anchor="middle">${esc(b.bucket)}</text>`;
-		svg += `<text x="${x + BW / 2}" y="${yE - 4}" text-anchor="end" transform="rotate(-40 ${x + BW / 2} ${yE - 4})" fill="#e6edf3">${fmt(b.avoided)}</text>`;
-	});
-	svg += `</svg>`;
-	return svg + `<div class="sub" style="color:var(--dim);font-size:11px;margin-top:8px"><span style="color:var(--green)">■</span> 节省 (avoided)&nbsp;&nbsp;<span style="color:var(--accent)">■</span> 实际发出 (emitted)&nbsp;&nbsp;悬停看明细</div>`;
-}
-
-function renderGroupTable(id, rows, withRatio) {
-	const el = $(id);
-	if (!rows || !rows.length) { el.innerHTML = `<div class="empty">暂无数据</div>`; return; }
-	let html = `<tr><th>${id.includes("tool") ? "工具" : id.includes("surface") ? "来源" : id.includes("content") ? "内容类型" : "adapter"}</th><th>次数</th><th>raw</th><th>emitted</th><th>节省</th>${withRatio ? "<th>压缩率</th>" : ""}<th style="width:25%">占 raw 比例</th></tr>`;
-	for (const r of rows) {
-		const share = DATA.totals.raw > 0 ? r.raw / DATA.totals.raw : 0;
-		html += `<tr><td>${esc(r.key)}</td><td>${fmt(r.events)}</td><td>${fmt(r.raw)}</td><td>${fmt(r.emitted)}</td><td style="color:var(--green)">${fmt(r.avoided)}</td>${withRatio ? `<td>${pct(r.ratio)}</td>` : ""}<td><div class="bar"><i style="width:${(share * 100).toFixed(1)}%"></i></div></td></tr>`;
-	}
-	el.innerHTML = html;
-}
-
-function renderEvents() {
-	const el = $("events");
-	if (!DATA.events.length) { el.innerHTML = `<div class="empty">暂无事件</div>`; return; }
-	let html = `<tr><th>时间</th><th>工具</th><th>干了什么</th><th>raw → emitted</th><th>节省</th><th>标记</th></tr>`;
-	for (const e of DATA.events) {
-		const badges = [];
-		if (e.dedup_hit) badges.push(`<span class="badge dedup">dedup 命中</span>`);
-		if (e.handle_created) badges.push(`<span class="badge handle">handle ${esc(e.handle_id)}</span>`);
-		if (e.handle_fetched) badges.push(`<span class="badge handle">取回 ${esc(e.handle_id)}</span>`);
-		if (e.read_blocked) badges.push(`<span class="badge read">拦截读取</span>`);
-		if (e.success === 0) badges.push(`<span class="badge fail">失败</span>`);
-		else if (e.success === 1 && !badges.length) badges.push(`<span class="badge ok">成功</span>`);
-		if (e.adapter_missing) badges.push(`<span class="badge fail">缺 ${esc(e.adapter_missing)}</span>`);
-		const what = e.adapter_used || e.note || e.surface;
-		html += `<tr>
-			<td>${localTime(e.ts)}</td>
-			<td>${esc(e.tool_name ?? "—")}</td>
-			<td style="font-family:var(--mono);font-size:11px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(what)}">${esc(what)}</td>
-			<td>${fmt(e.raw_tokens)} → ${fmt(e.emitted_tokens)}</td>
-			<td style="color:var(--green)">${e.tool_emitted_savings ? fmt(e.tool_emitted_savings) : (e.prevented_read_tokens ? "(" + fmt(e.prevented_read_tokens) + " 防读)" : "—")}</td>
-			<td>${badges.join(" ")}</td></tr>`;
-	}
-	el.innerHTML = html;
 }
 
 async function load() {
 	try {
-		const res = await fetch("/api/data");
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		var res = await fetch("/api/data", { cache: "no-store" });
+		if (!res.ok) throw new Error("HTTP " + res.status);
 		DATA = await res.json();
-		$("err").style.display = "none";
+		$("err").hidden = true;
 		render();
 	} catch (err) {
-		$("err").style.display = "block";
-		$("err").textContent = `加载失败: ${err}（dashboard 进程可能已退出）`;
+		$("err").hidden = false;
+		$("err").textContent = "加载失败：" + err.message + " —— dashboard 进程可能已退出（node contextmind/dashboard.mjs <项目目录>）";
 	}
 }
+
+$("period-tabs").addEventListener("click", function (ev) {
+	var b = ev.target.closest("button[data-k]");
+	if (!b) return;
+	periodKey = b.getAttribute("data-k");
+	renderPeriod();
+});
+$("refresh").addEventListener("click", load);
+
 load();
 setInterval(load, 15000);
 </script>

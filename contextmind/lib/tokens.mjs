@@ -43,3 +43,23 @@ export function truncateToTokens(text, budgetTokens) {
 	if (lastNl > 0) end = end.slice(0, lastNl);
 	return `${end}\n... [truncated: budget ${budgetTokens} tokens]`;
 }
+
+/**
+ * Mirror of `truncateToTokens` from the other end: keep the *last* budget's
+ * worth of text.
+ *
+ * Needed because a payload's meaning is often at its end — the build result, the
+ * assertion summary, the final stack frames (spec 11.4). When a payload is a
+ * single line, line-based packing has nothing to take a tail from, so the tail
+ * has to come from a byte window over the line itself.
+ */
+export function truncateFromTokens(text, budgetTokens) {
+	const maxBytes = budgetTokens * 4;
+	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+	const buf = Buffer.from(text, "utf8");
+	let start = buf.subarray(buf.length - maxBytes).toString("utf8");
+	// Drop the partial leading line rather than emit half a line of code.
+	const firstNl = start.indexOf("\n");
+	if (firstNl >= 0 && firstNl < start.length - 1) start = start.slice(firstNl + 1);
+	return `... [truncated: kept last ${budgetTokens} tokens] ...\n${start}`;
+}

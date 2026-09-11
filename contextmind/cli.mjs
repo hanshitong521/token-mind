@@ -35,10 +35,11 @@ import {
 	isOwnHook,
 	launcherFor,
 } from "./lib/install-plan.mjs";
-import { FORBIDDEN_STANDING_UPSTREAMS } from "./lib/upstreams-lock.mjs";
+import { FORBIDDEN_STANDING_UPSTREAMS, lockUpstreams, unlockUpstreams } from "./lib/upstreams-lock.mjs";
 import { engineStatus } from "./lib/engine.mjs";
 import { openHandles } from "./lib/handles.mjs";
 import { defaultDbPath as defaultTelemetryPath, formatSummary, openTelemetry } from "./lib/telemetry.mjs";
+import { probeCodegraphSpawn } from "./lib/codegraph-spawn.mjs";
 import { probeAdapters } from "./lib/probe.mjs";
 import { countTokens, TOKENIZER_ID } from "./lib/tokens.mjs";
 import { runOutputGate } from "./lib/output-gate.mjs";
@@ -173,7 +174,7 @@ function install(projectRoot, flags = {}) {
 		}
 	}
 
-	// MCP server registration (S4, decision 5C): the six-tool surface is the
+	// MCP server registration (S4, decision 5C): the seven-tool surface is the
 	// only ContextMind entry in mcp.json. Other servers the user configured
 	// stay — removing them is a call for the owner, not the installer; doctor
 	// reports the schema tax of anything still visible.
@@ -199,6 +200,12 @@ function install(projectRoot, flags = {}) {
 		env: cmEnv,
 	};
 	writeJson(mcpJson, mcp);
+
+	// Quarantine raw upstreams (codegraph) out of the agent-visible catalogue:
+	// leaving them registered duplicates the tool surface (schema tax) and lets
+	// an agent bypass preToolUse when Cursor exposes MCP without hook coverage.
+	// The entries are preserved in a lock file and restored by uninstall.
+	const { quarantined, lockPath } = lockUpstreams(mcpJson);
 
 	writeJson(join(cursorDir, MANIFEST_NAME), {
 		manifest_version: MANIFEST_VERSION,
@@ -280,9 +287,12 @@ function uninstall(projectRoot) {
 		if (Object.keys(mcp.mcpServers).length === 0) delete mcp.mcpServers;
 		writeJson(mcpJson, mcp);
 	}
+	// Put back whatever install quarantined, so uninstall is a true inverse.
+	const { restored } = unlockUpstreams(mcpJson);
 
 	rmSync(join(cursorDir, MANIFEST_NAME), { force: true });
 	console.log(`ContextMind removed from ${projectRoot}`);
+	if (restored.length > 0) console.log(`  upstreams: restored ${restored.join(", ")}`);
 	console.log("  handle/telemetry databases left in place; delete .contextmind/ to drop them too.");
 	return 0;
 }
@@ -384,6 +394,20 @@ function doctor(projectRoot) {
 	);
 
 	rows.push(
+		check("codegraph spawn (orient)", () => {
+			if (cfg.adapters?.codegraph?.enabled === false) return { status: "PASS", detail: "codegraph disabled" };
+			const probe = probeCodegraphSpawn({ ...cfg, project_root: projectRoot }, { timeoutMs: 25_000 });
+			if (probe.ok) return { status: "PASS", detail: probe.detail };
+			const bin = cfg.adapters?.codegraph?.bin ?? "codegraph";
+			const critical =
+				process.platform === "win32" && /\.ps1$/i.test(String(bin));
+			return critical
+				? { status: "FAIL", detail: `${probe.detail} — orient will hang; fix PowerShell -File spawn` }
+				: { status: "WARN", detail: probe.detail };
+		}),
+	);
+
+	rows.push(
 		check("always rules budget", () => {
 			const rulesDir = join(projectRoot, ".cursor", "rules");
 			if (!existsSync(rulesDir)) return { status: "WARN", detail: "no .cursor/rules" };
@@ -405,7 +429,7 @@ function doctor(projectRoot) {
 	);
 
 	rows.push(
-		check("mcp server (six tools)", () => {
+		check("mcp server (seven tools)", () => {
 			const mcp = readJson(join(projectRoot, ".cursor", "mcp.json"));
 			const servers = Object.keys(mcp?.mcpServers ?? {});
 			const ours = mcp?.mcpServers?.contextmind;
@@ -425,8 +449,8 @@ function doctor(projectRoot) {
 			// Spec 5.5: during the S1-S3 transition upstreams may coexist, but
 			// doctor must report the schema tax instead of staying quiet.
 			return upstreams.length === 0
-				? { status: "PASS", detail: `6 tools @ ${script}` }
-				: { status: "WARN", detail: `6 tools; upstreams still visible: ${upstreams.join(", ")}` };
+				? { status: "PASS", detail: `7 tools @ ${script}` }
+				: { status: "WARN", detail: `7 tools; upstreams still visible: ${upstreams.join(", ")}` };
 		}),
 	);
 

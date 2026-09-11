@@ -131,7 +131,8 @@ describe("G-S8-06: handle fetch does not rewrite history", () => {
 
 describe("G-S8-07: failure events enter the ledger", () => {
 	it("a governed failure is recorded with success=0 and its evidence tokens", async () => {
-		await0(callTool("context_run", { command: "node -e \"process.exit(7)\"" }, rt));
+		// Absolute interpreter: the child shell's PATH need not carry `node`.
+		await0(callTool("context_run", { command: `"${process.execPath}" -e "process.exit(7)"` }, rt));
 		const r = rows().at(-1);
 		assert.equal(r.tool_name, "context_run");
 		assert.equal(r.success, 0);

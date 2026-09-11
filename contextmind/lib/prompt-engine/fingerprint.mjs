@@ -204,7 +204,6 @@ export function isCacheRegressionSafe(diff) {
 	// A change in the "user" segment is expected and benign for prefix cache;
 	// anything before it threatens the stable prefix.
 	const changed = diff.cacheDiff.segmentsChanged;
-	const orderOf = (s) => (s === "system" ? 0 : s === "rules" ? 1 : s === "skills" ? 2 : s === "tools" ? 3 : s === "project" ? 4 : s === "dynamic" ? 5 : 6);
 	if (changed.some((s) => s !== "user")) return false;
 	const userIdx = changed.find((s) => s === "user");
 	return userIdx !== undefined && changed.length === 1;

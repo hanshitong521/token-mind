@@ -98,10 +98,6 @@ export function canonicalStringify(value) {
 	}
 }
 
-export function canonicalStringiffyAlias(value) {
-	return canonicalStringify(value);
-}
-
 /** Estimate tokens of canonical form; exported with method tagged. */
 export function canonicalTokenCount(value) {
 	return { count: countTokens(canonicalStringify(value)), method: "heuristic:chars/4", estimated: true };

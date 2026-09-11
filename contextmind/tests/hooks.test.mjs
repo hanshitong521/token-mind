@@ -247,7 +247,15 @@ describe("mcp output guard", () => {
 
 describe("session lifecycle", () => {
 	it("warns about unconfigured adapters within the 120-token budget", () => {
-		const r = runHook("cm-session-start.mjs", { session_id: "s1", conversation_id: "s1" });
+		// The probe counts a codegraph *CLI* on PATH as configured, so which
+		// adapters look missing depends on the host machine. Pin PATH empty to
+		// assert the contract — a bare project warns about every enabled
+		// adapter — instead of the machine the suite happens to run on.
+		const r = runHook(
+			"cm-session-start.mjs",
+			{ session_id: "s1", conversation_id: "s1" },
+			{ PATH: "", PATHEXT: "" },
+		);
 		assert.equal(r.status, 0);
 		assert.ok(r.json.additional_context, "expected a warning");
 		assert.match(r.json.additional_context, /codegraph/);

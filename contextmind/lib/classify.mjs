@@ -25,7 +25,7 @@ const BUILD_TOOL = /^\[INFO\]\s|^(BUILD SUCCESSFUL|BUILD FAILED)|^> Task /m;
 const TEST_COUNTS = /Tests run:|\d+ (?:failed|passed)|Test Suites:|^=+ .*(?:failed|passed|error).*=+$/m;
 const DIFF_HEADER = /^(diff --git |--- [^\n]+\n\+\+\+ |@@ -\d+)/m;
 const GIT_LOG_LINE = /^commit [0-9a-f]{7,40}\b/m;
-const GREP_LINE = /^[^:]+:\d+:/m;
+const GREP_LINE = /^(?=[^\s:]*[/.])[^\s:]+:\d+:/m;
 
 /**
  * Classify a payload. `cmd` is the originating command when known — it is the
@@ -146,16 +146,32 @@ export function isFailure(text, exitCode) {
 /**
  * Critical lines a reducer must never drop (spec 12.3 Preservation Contract).
  * Returned as the raw lines in their original order, ready to be spliced back.
+ *
+ * Two things the line-oriented form cannot express, both added after measuring
+ * real payloads against Headroom:
+ *
+ *  1. **Severity order.** A build log with 40 `ERROR` lines and one `FATAL` is
+ *     not 41 equivalent facts. The reducer's critical budget is finite, so when
+ *     it runs out the line that must survive is the FATAL — not whichever ERROR
+ *     happened to sit earliest in the file. Tier-1 lines (FATAL/CRITICAL/SEVERE/
+ *     PANIC) are therefore emitted first.
+ *  2. **Single-line JSON.** `json.dumps` / `JSON.stringify` default output has no
+ *     newlines, so the whole payload is one line and every `mark()` below either
+ *     matches that one line (keeping 55 KB) or nothing at all. The preservation
+ *     contract was structurally inoperative on the shape most MCP tools return.
+ *     `jsonCriticalFacts` extracts the salient *values* instead.
  */
 export function criticalLines(text, type) {
 	const lines = text.split("\n");
 	const keep = new Set();
+	const tier1 = new Set();
 
-	const mark = (re, cap = 25) => {
+	const mark = (re, cap = 25, tier = 2) => {
 		let n = 0;
 		for (let i = 0; i < lines.length && n < cap; i++) {
 			if (re.test(lines[i])) {
 				keep.add(i);
+				if (tier === 1) tier1.add(i);
 				n++;
 			}
 		}
@@ -170,7 +186,15 @@ export function criticalLines(text, type) {
 	mark(/^(#+\s*)?(AssertionError|Exception|Error|Caused by|Suppressed):/m, 20);
 	mark(/^error(\[[E0-9]+\]| TS\d+)?:/m, 30);
 	mark(/^npm ERR!/m, 30);
-	mark(/^(fatal|panic):/m, 20);
+	mark(/^(fatal|panic):/m, 20, 1);
+
+	// Timestamp-prefixed service logs. Every pattern above assumes the level
+	// starts the line, which is the minority format in practice — most logs read
+	// `2026-09-10T14:00:00Z ERROR [api] ...`. Without these, a FATAL buried in a
+	// timestamped log is not "critical" and the preservation contract never sees
+	// it, so the one line the operator needed is the one that gets dropped.
+	mark(/(?:^|\s)(FATAL|CRITICAL|SEVERE|PANIC)(?=\s|:)/, 30, 1);
+	mark(/(?:^|\s)ERROR(?=\s|:)/, 40);
 
 	if (type === "test_log") {
 		mark(/^\s*=+\s+.*(failed|passed|error).*=+\s*$/m, 5);
@@ -181,14 +205,82 @@ export function criticalLines(text, type) {
 		mark(/^@@ /, 200);
 		mark(/^(new file|deleted file|similarity index|rename from|rename to)/, 60);
 	}
-	if (type === "json") {
-		mark(/"(error|errors|message|status|code|exception)"\s*:/, 20);
-	}
 	if (type === "build_log") {
-		mark(/^(BUILD (SUCCESSFUL|FAILED)|\[INFO\] BUILD (SUCCESS|FAILURE))/m);
+		mark(/^(BUILD (SUCCESSFUL|FAILED)|\[INFO\] BUILD (SUCCESS|FAILURE))/m, 25, 1);
 		mark(/^> Task .* FAILED/m, 40);
 		mark(/^e:\s|^\/(.+):\s(error|warning):/m, 40);
 	}
 
-	return [...keep].sort((a, b) => a - b).map((i) => lines[i]);
+	const ordered = [...keep].sort((a, b) => a - b);
+	const prioritized = [
+		...ordered.filter((i) => tier1.has(i)),
+		...ordered.filter((i) => !tier1.has(i)),
+	];
+
+	// JSON is frequently one line, where line marks cannot help. Extract the
+	// values a reader needs (error text, status, message) and put them first:
+	// they are the payload's whole point, so they must outrank everything else
+	// for the critical budget.
+	const facts = type === "json" && lines.length <= 3 ? jsonCriticalFacts(text) : [];
+
+	return [...facts, ...prioritized.map((i) => lines[i])];
+}
+
+const JSON_FACT_KEY =
+	/^(error|errors|exception|exceptions|stack|stacktrace|traceback|failure|failures|panic|reason)$/i;
+const JSON_ERRORISH =
+	/\b(error|errors|exception|fail|failed|failure|refused|timeout|timed out|exhausted|denied|unauthorized|forbidden|panic|fatal|critical|not available|stack trace|traceback)\b/i;
+
+/**
+ * Salient string values inside a JSON payload, as literal substrings.
+ *
+ * Only *evidence* qualifies. Matching a broad key such as `message` would make
+ * every row of a log-search result a "critical fact" — a 300-entry result set
+ * then fills the whole fact budget with `Request processed successfully` and
+ * crowds out the four error strings the reader actually needs. So a value is
+ * taken when its key is inherently an error field, or when the value itself
+ * reads like a failure.
+ *
+ * Bounded on purpose: this feeds a critical budget measured in hundreds of
+ * tokens, so an unbounded walk over a 100 000-row result set would defeat the
+ * reducer it is meant to protect.
+ */
+function jsonCriticalFacts(text, cap = 16) {
+	let parsed;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		return [];
+	}
+	const out = [];
+	const seen = new Set();
+	const push = (s) => {
+		if (typeof s !== "string" || s.trim().length < 4) return;
+		const t = (s.length > 160 ? s.slice(0, 160) : s).replace(/\s+/g, " ").trim();
+		if (seen.has(t)) return;
+		seen.add(t);
+		out.push(t);
+	};
+	const walk = (node, key) => {
+		if (out.length >= cap) return;
+		if (Array.isArray(node)) {
+			for (const v of node) {
+				if (out.length >= cap) return;
+				walk(v, key);
+			}
+			return;
+		}
+		if (node && typeof node === "object") {
+			for (const [k, v] of Object.entries(node)) {
+				if (out.length >= cap) return;
+				walk(v, k);
+			}
+			return;
+		}
+		if (typeof node === "string" && ((key && JSON_FACT_KEY.test(key)) || JSON_ERRORISH.test(node))) {
+			push(node);
+		}
+	};
+	walk(parsed, null);
+	return out;
 }

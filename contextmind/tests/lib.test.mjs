@@ -378,6 +378,15 @@ describe("orient-key", () => {
 		assert.equal(normalizeOrientQuery("a/b/TRedPacketTaskServiceImpl.java"), "tredpackettask");
 		assert.equal(orientSeenKey("com.foo.BarServiceImpl"), orientSeenKey("Bar"));
 	});
+
+	it("simple symbol vs path/glob for orient fast path", async () => {
+		const { codegraphSymbolArg, isSimpleOrientSymbol } = await import("../lib/orient-key.mjs");
+		assert.equal(isSimpleOrientSymbol("OceanMikuController"), true);
+		assert.equal(isSimpleOrientSymbol("com.foo.Bar"), true);
+		assert.equal(isSimpleOrientSymbol("foo * bar"), false);
+		assert.equal(codegraphSymbolArg("com.shejiu.ocean.controller.OceanMikuController"), "OceanMikuController");
+		assert.equal(codegraphSymbolArg("shejiu-ocean/.../OceanMikuController.java"), "OceanMikuController");
+	});
 });
 
 describe("mcp guard", () => {

@@ -36,6 +36,8 @@ No `start`/`stop`: hooks are stateless subprocesses, there is no daemon.
 | `handle store unavailable` | `doctor` → handle store. Usually a read-only project dir. |
 | Everything governed but slow | Check `gate_latency_ms` in the ledger; it is reported separately from `hook_latency_ms`. |
 | Same FQCN explored many times | Adapter cache should skip CodeGraph (`first_layer=adapter_cache` in report). `refresh:true` to bypass. Optional Redis: `CONTEXTMIND_REDIS_URL`. |
+| `context_orient` hangs 25–120s (Windows) | `doctor` → **codegraph spawn (orient)** must PASS. `.ps1` bin requires PowerShell `-File` (ADR-0006). Run `node .cursor/contextmind/scripts/benchmark-orient.mjs` for before/after ms. |
+| Agent stuck reading MCP tool JSON | Never parallel-`Read` `~/.cursor/projects/*/mcps/**`; use `CallMcpTool` (schemas are already injected). |
 
 ## Do not
 

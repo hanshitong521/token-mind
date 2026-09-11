@@ -16,7 +16,7 @@
 import { classify, criticalLines } from "./classify.mjs";
 import { duplicateStub, fingerprint } from "./dedup.mjs";
 import { compress } from "./engine.mjs";
-import { countTokens, truncateToTokens } from "./tokens.mjs";
+import { countTokens, truncateFromTokens, truncateToTokens } from "./tokens.mjs";
 
 /**
  * How much raw text we will hand back when the gate abstains. Bounded because
@@ -99,8 +99,22 @@ export function structuralReduce(raw, { type, budgetTokens, critical = [] }) {
 	const tailTokens = Math.floor(budgetTokens * 0.25);
 	const critTokens = budgetTokens - headTokens - tailTokens;
 
-	const head = takeTokensFrom(lines, 0, headTokens, "head");
-	const tail = takeTokensFrom(lines, Math.max(head.end, 0), tailTokens, "tail");
+	let head = takeTokensFrom(lines, 0, headTokens, "head");
+	let tail = takeTokensFrom(lines, Math.max(head.end, 0), tailTokens, "tail");
+
+	// Window fallback. When the first line alone exceeds the head budget — a
+	// single-line JSON payload (`json.dumps` / `JSON.stringify` default, i.e. the
+	// shape most MCP tools return), or any no-newline blob — line packing yields
+	// an empty head *and* an empty tail, and the payload would be replaced by its
+	// own omission markers. That is silent data loss, and because `json` is
+	// classified as non-failure the preservation check never fires to catch it.
+	// Window the raw text instead so content always survives.
+	let windowed = false;
+	if (head.text.trim() === "" && tail.text.trim() === "") {
+		windowed = true;
+		head = { text: truncateToTokens(raw, headTokens), omitted: 0 };
+		tail = { text: truncateFromTokens(raw, tailTokens), omitted: 0 };
+	}
 
 	const critLines = [];
 	let used = 0;
@@ -113,12 +127,17 @@ export function structuralReduce(raw, { type, budgetTokens, critical = [] }) {
 
 	const parts = [];
 	parts.push(head.text.trimEnd());
-	if (head.omitted > 0) parts.push(`\n... [${head.omitted} lines omitted] ...\n`);
+	if (windowed) {
+		const kept = head.text.length + tail.text.length;
+		parts.push(`\n... [${Math.max(0, raw.length - kept)} chars omitted] ...\n`);
+	} else if (head.omitted > 0) {
+		parts.push(`\n... [${head.omitted} lines omitted] ...\n`);
+	}
 	if (critLines.length > 0) {
 		parts.push(`\n--- critical evidence (${critLines.length} lines) ---\n`);
 		parts.push(critLines.join("\n"));
 	}
-	if (tail.omitted > 0) parts.push(`\n... [${tail.omitted} lines omitted] ...\n`);
+	if (!windowed && tail.omitted > 0) parts.push(`\n... [${tail.omitted} lines omitted] ...\n`);
 	if (tail.text.trim()) parts.push(`\n${tail.text.trim()}`);
 
 	return truncateToTokens(parts.join("\n"), budgetTokens + Math.floor(budgetTokens * 0.1));
