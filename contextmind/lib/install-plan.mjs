@@ -5,6 +5,7 @@
 
 /** Real hook entrypoints only. Empty cm-hookd / cmhook-client stubs removed (burst damage → 5s hang). */
 export const HOOK_FILES = [
+	"cm-rpc.mjs",
 	"cm-lib.mjs",
 	"cm-pre-tool.mjs",
 	"cm-post-tool.mjs",
@@ -19,8 +20,28 @@ export const HOOK_FILES = [
  * those files were wiped to CRLF stubs and caused warm p50≈5s.
  */
 export function launcherFor(hookName) {
+	return launcherForNodeOnly(hookName);
+}
+
+/** Safe launcher — never invokes cmhook (use after `fix-hooks` or when verify fails). */
+export function launcherForNodeOnly(hookName) {
 	return `@echo off
 setlocal
+where node >nul 2>&1
+if errorlevel 1 exit /b 0
+node "%~dp0${hookName}.mjs"
+exit /b %ERRORLEVEL%
+`;
+}
+
+/** Native client only when install verified JSON on this machine. */
+export function launcherForVerifiedNative(hookName) {
+	return `@echo off
+setlocal
+if exist "%~dp0.cmhook-json-ok" if exist "%~dp0cmhook.exe" (
+  "%~dp0cmhook.exe" ${hookName}
+  exit /b %ERRORLEVEL%
+)
 where node >nul 2>&1
 if errorlevel 1 exit /b 0
 node "%~dp0${hookName}.mjs"
@@ -41,10 +62,10 @@ export const HOOK_ENTRIES = [
 	{
 		event: "preToolUse",
 		matcher:
-			"Read|Grep|Glob|Shell|CallMcpTool|Task|MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run",
+			"Shell|CallMcpTool|CallDynamicTool|Task|MCP:context_orient|MCP:context_fetch|MCP:context_find|MCP:context_get|MCP:context_impact|MCP:context_run|MCP:context_outline",
 		failClosed: false,
 		hook: "cm-pre-tool",
-		purpose: "Read Guard, Grep/Glob bounds, Shell wrap, Task block, native MCP context_* pre-deny (L2)",
+		purpose: "Shell wrap + Task/MCP pre-deny (L2). Read/Grep/Glob out of preTool (hang doc P0)",
 	},
 	{
 		event: "preToolUse",
@@ -56,7 +77,7 @@ export const HOOK_ENTRIES = [
 	},
 	{
 		event: "postToolUse",
-		matcher: "Shell|CallMcpTool",
+		matcher: "Shell|CallMcpTool|CallDynamicTool",
 		failClosed: false,
 		hook: "cm-post-tool",
 		purpose: "Shell exit audit",

@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { ENGINE_ROOT } from "./config.mjs";
 
 export const WRAP_TARGETS = [
-	/^git\s+(status|log|diff|show|blame|branch|stash\s+list|grep|ls-files)/,
+	// hang doc P1: git porcelain never wrapped (agent diagnostic path)
 	/^(npm|yarn|pnpm|bun)\s+(install|i|add|test|run\s|update|outdated|audit|list|ls|view|info)/,
 	/^cargo\s+(build|test|check|run|clippy|tree|search|metadata)/,
 	/^(pytest|jest|mocha|vitest|tap|bats)\b/,
@@ -63,6 +63,9 @@ export function evaluateShell(command, { cfg, mode } = {}) {
 
 	const trimmed = (command ?? "").trim();
 	if (trimmed.length === 0) return { action: "skip", reason: "empty command" };
+	if (cfg.shell?.wrap_git === false && /^\s*git\b/i.test(trimmed)) {
+		return { action: "skip", reason: "git porcelain (wrap_git=false)" };
+	}
 	if (ALREADY_WRAPPED.test(trimmed)) return { action: "skip", reason: "already wrapped (no double compression)" };
 	if (NEVER_WRAP.test(trimmed)) return { action: "skip", reason: "never-terminating command" };
 
