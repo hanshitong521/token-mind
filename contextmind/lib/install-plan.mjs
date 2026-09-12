@@ -19,19 +19,30 @@ export const HOOK_FILES = [
  * Direct node → hook.mjs. Do NOT route through cmhook-client / bun / cmhook.exe:
  * those files were wiped to CRLF stubs and caused warm p50≈5s.
  */
+/** Resolve Node for hook fallback: CONTEXTMIND_NODE → D:\nodejs → PATH (avoid Python nodejs_wheel). */
+function nodeResolveBlock(hookMjs) {
+	return `set "CM_NODE="
+if defined CONTEXTMIND_NODE if exist "%CONTEXTMIND_NODE%" set "CM_NODE=%CONTEXTMIND_NODE%"
+if not defined CM_NODE if exist "D:\\nodejs\\node.exe" set "CM_NODE=D:\\nodejs\\node.exe"
+if not defined CM_NODE (
+  where node >nul 2>&1
+  if errorlevel 1 exit /b 0
+  set "CM_NODE=node"
+)
+"%CM_NODE%" "%~dp0${hookMjs}"
+exit /b %ERRORLEVEL%
+`;
+}
+
 export function launcherFor(hookName) {
-	return launcherForNodeOnly(hookName);
+	return launcherForVerifiedNative(hookName);
 }
 
 /** Safe launcher — never invokes cmhook (use after `fix-hooks` or when verify fails). */
 export function launcherForNodeOnly(hookName) {
 	return `@echo off
 setlocal
-where node >nul 2>&1
-if errorlevel 1 exit /b 0
-node "%~dp0${hookName}.mjs"
-exit /b %ERRORLEVEL%
-`;
+${nodeResolveBlock(`${hookName}.mjs`)}`;
 }
 
 /** Native client only when install verified JSON on this machine. */
@@ -42,11 +53,7 @@ if exist "%~dp0.cmhook-json-ok" if exist "%~dp0cmhook.exe" (
   "%~dp0cmhook.exe" ${hookName}
   exit /b %ERRORLEVEL%
 )
-where node >nul 2>&1
-if errorlevel 1 exit /b 0
-node "%~dp0${hookName}.mjs"
-exit /b %ERRORLEVEL%
-`;
+${nodeResolveBlock(`${hookName}.mjs`)}`;
 }
 
 /**
