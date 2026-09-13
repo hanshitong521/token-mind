@@ -371,11 +371,20 @@ function renderHits() {
 	var fetchRate = created > 0 ? fetched / created : null;
 
 	var donut = donutSvg(hitRate, "去重命中率", CH.violet);
+	// A hook-less host (Trae) never runs the PostToolUse read-guard, so its
+	// reads_blocked can only ever be 0 — the honest label is "not available".
+	var noHooks = DATA.host_caps && DATA.host_caps.hooks === false;
+	var readVal = noHooks ? "N/A" : fmt(h.reads_blocked) + " / " + fmt(h.overrides);
+	var readSub = noHooks ? "此宿主不派发工具 hook，读取拦截不适用" : "override 越多说明拦截越激进";
+	// Handle 0/0 is healthy, not a failure: the gate only stores a handle when
+	// output exceeds its budget; small answers pass through untouched.
+	var handleSub = created > 0 ? "回取率 " + pct(fetchRate) + " · 建了不取=白存" : "输出均在预算内，无需建 handle（正常）";
+	var amMissing = (h.adapter_missing || 0) > 0;
 	var items = [
 		{ k: "去重命中 / 未命中", v: fmt(h.dedup_hits) + " / " + fmt(events - (h.dedup_hits || 0)), s: "dedup_hit", c: CH.violet },
-		{ k: "handle 建立 / 回取", v: fmt(created) + " / " + fmt(fetched), s: "回取率 " + pct(fetchRate) + " · 建了不取=白存", c: CH.brand },
-		{ k: "读取拦截 / 用户 override", v: fmt(h.reads_blocked) + " / " + fmt(h.overrides), s: "override 越多说明拦截越激进", c: CH.warn },
-		{ k: "适配器缺失事件", v: fmt(h.adapter_missing), s: "adapter_missing 非空", c: CH.bad },
+		{ k: "handle 建立 / 回取", v: fmt(created) + " / " + fmt(fetched), s: handleSub, c: CH.brand },
+		{ k: "读取拦截 / 用户 override", v: readVal, s: readSub, c: CH.warn },
+		{ k: "适配器缺失事件", v: fmt(h.adapter_missing), s: amMissing ? "adapter_missing 非空 → 走了降级路径" : "0 = 适配器全部可用（健康）", c: amMissing ? CH.bad : CH.ok },
 		{ k: "成功 / 失败", v: fmt(h.successes) + " / " + fmt(events - (h.successes || 0)), s: "success=0 的请求", c: CH.ok }
 	];
 	var list = items.map(function (it) {

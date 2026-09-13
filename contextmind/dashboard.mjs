@@ -19,6 +19,23 @@ import { existsSync, readFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+// Host capabilities come from the registry beside this file. Read-guard rows
+// can only ever come from a tool hook, so "0" on a hook-less host (Trae) means
+// "not available", not "nothing was blocked" — the page needs the caps to label
+// the difference.
+function hostCaps(host) {
+	if (!host) return null;
+	const p = join(HERE, "hosts.json");
+	if (!existsSync(p)) return null;
+	try {
+		const doc = JSON.parse(readFileSync(p, "utf8"));
+		const prof = (doc.hosts || []).find((h) => h.id === host);
+		return prof ? prof.capabilities ?? null : null;
+	} catch {
+		return null;
+	}
+}
+
 // ─── args ───
 
 function parse(argv) {
@@ -249,6 +266,7 @@ function apiData(requested = "") {
 		generated_at: new Date().toISOString(),
 		project: projectRoot,
 		host: host || null,
+		host_caps: hostCaps(host),
 		host_filter_dropped: Boolean(requested) && !host,
 		tokenizer: TOKENIZER_ID,
 		totals: totals(),
