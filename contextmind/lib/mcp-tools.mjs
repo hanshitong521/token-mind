@@ -394,6 +394,26 @@ async function toolFind(args, rt) {
 		);
 		return { content: [{ type: "text", text }] };
 	}
+	// Same cross-process ResultCache orient uses: a repeat query must not pay the
+	// ~700ms codegraph spawn again. Trae has no host-side dedup, so this bound is
+	// the only thing standing between an agent and a re-spawn per call.
+	const cacheKey = adapterCacheKey("context_find", symbol, codegraphGraphFp(cfg.project_root ?? process.cwd()));
+	const refresh = args?.refresh === true;
+	if (!refresh && rt.cache) {
+		const hit = rt.cache.lookup(cacheKey);
+		if (hit?.source) {
+			record(rt, {
+				toolName: "context_find",
+				success: true,
+				note: "find_cache_hit",
+				handleId: hit.handleId,
+				rawTokens: hit.rawTokens ?? 0,
+				emittedTokens: countTokens(hit.source),
+				adapterUsed: "result_cache",
+			});
+			return { content: [{ type: "text", text: hit.source }] };
+		}
+	}
 	const res = runCodegraph(cfg, ["query", symbol]);
 	const raw = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`.trim();
 	if (!raw || /^(no|empty|0)/i.test(raw.split("\n")[0] ?? "")) {
@@ -412,7 +432,9 @@ async function toolFind(args, rt) {
 		surface: "find",
 		exitCode: res.status,
 	});
-	return { content: [{ type: "text", text: `exit_code=${res.status}\n${gate.text}` }] };
+	const body = `exit_code=${res.status}\n${gate.text}`;
+	rt.cache?.store(cacheKey, { handleId: gate.handleId ?? null, source: body, rawTokens: gate.rawTokens ?? 0 });
+	return { content: [{ type: "text", text: body }] };
 }
 
 function inProject(cfg, path) {
@@ -554,6 +576,22 @@ async function toolImpact(args, rt) {
 			}],
 		};
 	}
+	const cacheKey = adapterCacheKey("context_impact", symbol, codegraphGraphFp(cfg.project_root ?? process.cwd()));
+	if (args?.refresh !== true && rt.cache) {
+		const hit = rt.cache.lookup(cacheKey);
+		if (hit?.source) {
+			record(rt, {
+				toolName: "context_impact",
+				success: true,
+				note: "impact_cache_hit",
+				handleId: hit.handleId,
+				rawTokens: hit.rawTokens ?? 0,
+				emittedTokens: countTokens(hit.source),
+				adapterUsed: "result_cache",
+			});
+			return { content: [{ type: "text", text: hit.source }] };
+		}
+	}
 	const res = runCodegraph(cfg, ["impact", symbol]);
 	const noIndex = /not initialized|no index|run.*init/i.test(`${res.stdout ?? ""}${res.stderr ?? ""}`);
 	if (noIndex || (res.status !== 0 && !res.stdout?.trim())) {
@@ -582,7 +620,10 @@ async function toolImpact(args, rt) {
 		surface: "impact",
 		exitCode: res.status,
 	});
-	return { content: [{ type: "text", text: `exit_code=${res.status}\n${gate.text}` }] };
+	const body = `exit_code=${res.status}\n${gate.text}`;
+	// Only the composed success is cached — NO_INDEX is transient and must retry after `codegraph init`.
+	rt.cache?.store(cacheKey, { handleId: gate.handleId ?? null, source: body, rawTokens: gate.rawTokens ?? 0 });
+	return { content: [{ type: "text", text: body }] };
 }
 
 async function toolRun(args, rt) {
