@@ -12,7 +12,7 @@
  * config paths, because a guessed path installs governance that never runs.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,11 +101,92 @@ export function mcpOnlyHosts() {
  * to the home directory — that is the whole difference between Cursor (a project
  * `.cursor/mcp.json`) and Qoder (MCP only in the machine-wide
  * `~/.qoder-cn/settings.json`), which is why the installer used to be Cursor-only.
+ *
+ * A path segment of `*` matches one of several sibling directories. Some hosts
+ * namespace connector config by a per-install id (WorkBuddy:
+ * `~/.workbuddy/connectors/<uid>/mcp.json`) and the uid is not knowable from the
+ * registry — pinning one would write a file the host never reads on a machine whose
+ * uid differs. Candidate ranking, in order:
+ *
+ *   1. the sibling whose directory holds a state/lock marker (`connector-states*`,
+ *      `.master.key`) — that is the profile the app actually runs against;
+ *   2. the most recently modified `mcp.json` — an install updates its own config;
+ *   3. `default`, then lowest name — the legacy on-disk convention.
+ *
+ * A bare "prefer default" rule is wrong on the real box: WorkBuddy keeps the live
+ * 178-server profile under a UUID directory while `default/` holds a stale 98-server
+ * copy, so preferring `default` writes ContextMind somewhere the host does not read.
+ * A glob with no match returns the literal path, so the caller still has a concrete
+ * target instead of `undefined`.
  */
 export function resolveConfigFile(target, { projectRoot, home = homedir() } = {}) {
 	if (!target?.path) return null;
 	const rel = target.path.replace(/^[~/]/, "").replace(/^\/+/, "");
-	return target.scope === "user" ? resolve(join(home, rel)) : resolve(join(projectRoot ?? ".", rel));
+	const base = target.scope === "user" ? resolve(home) : resolve(projectRoot ?? ".");
+	if (!rel.includes("*")) return resolve(join(base, rel));
+
+	const segments = rel.split(/[\\/]/).filter(Boolean);
+	let dir = base;
+	for (let i = 0; i < segments.length; i++) {
+		const seg = segments[i];
+		const last = i === segments.length - 1;
+		if (seg !== "*") {
+			dir = join(dir, seg);
+			continue;
+		}
+		const pick = pickWildcardSibling(dir, segments[i + 1]);
+		if (!pick) return resolve(join(base, rel));
+		dir = join(dir, pick);
+		if (last) return dir;
+	}
+	return resolve(dir);
+}
+
+/** State markers that mean "this directory is the profile the app is running". */
+const LIVE_MARKER_RE = /^(connector-states|\.master\.key|connector-states\.v3\.json)$/i;
+
+/** Choose one sibling for a `*` segment; null when there is nothing to choose from. */
+function pickWildcardSibling(parent, nextSegment) {
+	let entries = [];
+	try {
+		entries = readdirSync(parent, { withFileTypes: true });
+	} catch {
+		return null;
+	}
+	const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+	if (dirs.length === 0) return null;
+	if (dirs.length === 1) return dirs[0];
+
+	const scored = dirs.map((name) => {
+		const full = join(parent, name);
+		let files = [];
+		try {
+			files = readdirSync(full);
+		} catch {
+			files = [];
+		}
+		const live = files.some((f) => LIVE_MARKER_RE.test(f));
+		const target = nextSegment ? join(full, nextSegment) : full;
+		let mtime = 0;
+		try {
+			mtime = statSync(target).mtimeMs;
+		} catch {
+			try {
+				mtime = statSync(full).mtimeMs;
+			} catch {
+				mtime = 0;
+			}
+		}
+		return { name, live, mtime };
+	});
+
+	const liveOnes = scored.filter((s) => s.live);
+	if (liveOnes.length > 0) {
+		return liveOnes.sort((a, b) => b.mtime - a.mtime)[0].name;
+	}
+	const byMtime = [...scored].sort((a, b) => b.mtime - a.mtime);
+	if (byMtime[0].mtime > 0 && byMtime[0].mtime !== byMtime[1]?.mtime) return byMtime[0].name;
+	return scored.some((s) => s.name === "default") ? "default" : scored.map((s) => s.name).sort()[0];
 }
 
 export function mcpConfigFile(hostId, opts) {

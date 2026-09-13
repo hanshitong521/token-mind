@@ -67,7 +67,8 @@ writeFileSync(
 );
 process.env.CONTEXTMIND_HOSTS_FILE = registryFile;
 
-const { hostIds, profileFor } = await import(pathToFileURL(HOSTS).href);
+const registryFns = await import(pathToFileURL(HOSTS).href);
+const { hostIds, profileFor } = registryFns;
 const {
 	HOOK_ENTRIES,
 	HOOK_SCRIPT_DIR,
@@ -292,6 +293,54 @@ describe("a third host, described only in data", () => {
 		assert.ok(!("env" in session), "hooks.env {} gets no key");
 		assert.ok(!("matcher" in session));
 		assert.equal(session.command, ".cursor/hooks/cm-session-start.cmd");
+	});
+});
+
+describe("workbuddy (verified contract)", () => {
+	// WorkBuddy is the first host whose MCP config is namespaced by a per-install id
+	// (`connectors/<uid>/mcp.json`), so its path must be a glob the resolver expands, not a
+	// literal `default`. It is also the first mcp-only host that wants the Brain mounted —
+	// which used to key off `profile.id === "cursor"`.
+	it("resolves a globbed connector path against the real directory", () => {
+		const profile = profileFor("workbuddy");
+		assert.equal(profile.verified, true);
+		assert.match(profile.mcp.path, /\*/);
+		const home = mkdtempSync(join(tmpdir(), "cm-wb-home-"));
+		mkdirSync(join(home, ".workbuddy", "connectors", "default"), { recursive: true });
+		assert.equal(
+			registryFns.resolveConfigFile(profile.mcp, { home }),
+			join(home, ".workbuddy", "connectors", "default", "mcp.json"),
+		);
+	});
+
+	it("prefers the live uuid profile over the stale default sibling", () => {
+		// The real box keeps the running config under a UUID dir (with connector-states)
+		// and a stale copy under default/. Writing to default/ would install ContextMind
+		// where the host never reads it — the exact bug a bare "prefer default" rule has.
+		const home = mkdtempSync(join(tmpdir(), "cm-wb-live-"));
+		const root = join(home, ".workbuddy", "connectors");
+		const stale = join(root, "default");
+		const liveUid = join(root, "0f0f0f0f-1111-2222-3333-444455556666");
+		mkdirSync(stale, { recursive: true });
+		mkdirSync(liveUid, { recursive: true });
+		writeFileSync(join(stale, "mcp.json"), "{}");
+		writeFileSync(join(liveUid, "mcp.json"), "{}");
+		writeFileSync(join(liveUid, "connector-states.v3.json"), "{}");
+		const resolved = registryFns.resolveConfigFile(profileFor("workbuddy").mcp, { home });
+		assert.equal(resolved, join(liveUid, "mcp.json"), "the state-marker sibling is the live profile");
+	});
+
+	it("declares the Brain mount and the cwd capability on the profile, not in code", () => {
+		const profile = profileFor("workbuddy");
+		assert.equal(profile.mcp.mountBrain, true);
+		assert.equal(profile.mcp.cwdSupported, false);
+		assert.equal(profile.capabilities.hooks, false, "no hook surface: WorkBuddy is an MCP-only host");
+	});
+
+	it("takes no hook rows, because its profile declares no hook surface", () => {
+		const profile = profileFor("workbuddy");
+		assert.deepEqual(dedupeEntriesForHost(profile, HOOK_ENTRIES), []);
+		assert.equal(hookEntryFor(profile, { hook: "cm-pre-tool", event: "preToolUse", projectRoot: ROOT }), null);
 	});
 });
 
