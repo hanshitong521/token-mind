@@ -33,14 +33,22 @@ function normPath(p) {
 }
 
 function callMcpTarget(args) {
+	const tool = String(args.toolName ?? args.tool_name ?? "").toLowerCase();
+	if (tool.startsWith("mcp__")) {
+		const parts = tool.split("__");
+		if (parts.length >= 3) {
+			return { server: String(args.server ?? args.mcp_server ?? parts[1]).toLowerCase(), tool: parts.slice(2).join("__").toLowerCase() };
+		}
+	}
+	// Trae's `run_mcp` names the target with two keys instead of one prefixed string.
 	return {
-		server: String(args.server ?? args.mcp_server ?? "").toLowerCase(),
-		tool: String(args.toolName ?? args.tool_name ?? "").toLowerCase(),
+		server: String(args.server ?? args.mcp_server ?? args.server_name ?? "").toLowerCase(),
+		tool,
 	};
 }
 
 function contextFetchPreLite(args) {
-	const inner = args.arguments ?? args.tool_input ?? {};
+	const inner = args.arguments ?? args.tool_input ?? args.args ?? {};
 	return inner?.full !== true;
 }
 
@@ -62,7 +70,8 @@ function canFastAllowShell(name, args) {
 }
 
 function canFastAllowCallMcp(name, args) {
-	if (name !== "callmcptool") return false;
+	// Cursor: `CallMcpTool`. Trae: `run_mcp`. Both carry the target inside the args.
+	if (name !== "callmcptool" && name !== "run_mcp") return false;
 	const { server, tool } = callMcpTarget(args);
 	if (server.includes("project-brain") && BRAIN_WHY_TOOLS.has(tool)) return true;
 	if (server.includes("ads-mysql")) return true;

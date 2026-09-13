@@ -309,6 +309,15 @@ export function hookEntryFor(
 		name: `${entryNamePrefixFor(profile)}${hook}`,
 		timeout: 5,
 	};
+	// Claude Code's real row schema has only a `command` string — no `args` array.
+	// Qoder tolerates the extra key; a host that declares `leafCommandString` would
+	// run bare `cmd.exe` and ignore the rest, so the row collapses into one quoted
+	// command line instead. Own-entry recognition still matches: the cm-* path is
+	// inside the joined string.
+	if (profile.hooks.file?.leafCommandString === true) {
+		leaf.command = `cmd.exe /d /c "${leaf.args[2]}"`;
+		delete leaf.args;
+	}
 	if (Object.keys(env).length) leaf.env = env;
 	return {
 		async: isAsyncEvent(profile, event),
