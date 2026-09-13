@@ -136,19 +136,51 @@
     {
       "id": "trae",
       "label": "Trae",
-      "verified": false,
-      "unverifiedReason": "No Trae install to read a config off, and no official doc path pinned for its MCP file. Same procedure as codex: verify against a real install, set verified true.",
-      "capabilities": { "hooks": false, "mcp": false, "failClosed": false, "outputRewrite": false },
+      "verified": true,
+      "capabilities": {
+        "hooks": true,
+        "mcp": true,
+        "failClosed": false,
+        "outputRewrite": false
+      },
       "detect": {
-        "transcriptPaths": ["\\.trae"],
-        "configDirs": ["\\.trae"],
-        "eventCase": null,
-        "toolPayloadKey": null,
+        "transcriptPaths": ["\\.trae", "\\.trae-cn"],
+        "configDirs": ["\\.trae", "\\.trae-cn"],
+        "eventCase": "upper",
+        "toolPayloadKey": "tool_response",
         "mcpToolPrefix": null
       },
       "mcpClientInfo": ["trae"],
-      "hooks": null,
-      "mcp": null
+      "hooks": {
+        "file": {
+          "scope": "project",
+          "path": ".trae/hooks.json",
+          "keyPath": "hooks",
+          "entryShape": "claude-nested",
+          "leafCommandString": true,
+          "rootFields": { "version": 1 }
+        },
+        "eventNames": {
+          "preToolUse": "PreToolUse",
+          "postToolUse": "PostToolUse",
+          "sessionStart": "SessionStart",
+          "beforeSubmitPrompt": "UserPromptSubmit",
+          "stop": "Stop"
+        },
+        "asyncEvents": [],
+        "matcherEvents": ["PreToolUse", "PostToolUse"],
+        "toolMatcher": "^(Shell|RunCommand|Bash|Read|run_mcp|mcp__.*|CallMcpTool|Task|Agent)$",
+        "env": { "CONTEXTMIND_HOST": "trae" }
+      },
+      "mcp": {
+        "scope": "user",
+        "path": "AppData/Roaming/Trae CN/User/mcp.json",
+        "keyPath": "mcpServers",
+        "entryShape": "stdio",
+        "mountBrain": true,
+        "cwdSupported": false,
+        "fields": {}
+      }
     }
   ]
 }

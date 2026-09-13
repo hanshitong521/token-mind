@@ -67,7 +67,7 @@ writeFileSync(
 );
 process.env.CONTEXTMIND_HOSTS_FILE = registryFile;
 
-const { hostIds, profileFor } = await import(pathToFileURL(HOSTS).href);
+const { hostIds, profileFor, resolveConfigFile } = await import(pathToFileURL(HOSTS).href);
 const {
 	HOOK_ENTRIES,
 	HOOK_SCRIPT_DIR,
@@ -292,6 +292,72 @@ describe("a third host, described only in data", () => {
 		assert.ok(!("env" in session), "hooks.env {} gets no key");
 		assert.ok(!("matcher" in session));
 		assert.equal(session.command, ".cursor/hooks/cm-session-start.cmd");
+	});
+});
+
+describe("trae (verified contract)", () => {
+	// Trae is the first host that reads Claude Code's nested shape but not its leaf schema:
+	// the row it accepts is `{ command: "<one string>", timeout, env }` — an `args` array is
+	// dropped, which would run bare `cmd.exe` and install governance nowhere. It also has no
+	// SessionEnd event, so that row must collapse away, and its MCP file is user-scope under
+	// an AppData path that resolves against the home dir, not a literal `%APPDATA%`.
+	it("carries hooks and MCP, and refuses per-row failClosed and output rewrite", () => {
+		const profile = profileFor("trae");
+		assert.equal(profile.verified, true);
+		assert.deepEqual(profile.capabilities, {
+			hooks: true,
+			mcp: true,
+			failClosed: false,
+			outputRewrite: false,
+		});
+	});
+
+	it("collapses SessionEnd away and keeps the five events Trae actually fires", () => {
+		assert.deepEqual(rows("trae").map((r) => r.event), [
+			"PreToolUse",
+			"PostToolUse",
+			"SessionStart",
+			"UserPromptSubmit",
+			"Stop",
+		]);
+	});
+
+	it("writes the leaf as a single quoted command string, not command+args", () => {
+		const entries = byEvent("trae");
+		const leaf = entries.PreToolUse.hooks[0];
+		assert.ok(!("args" in leaf), "Trae drops an args array and would run bare cmd.exe");
+		assert.match(leaf.command, /^cmd\.exe \/d \/c "C:\\Users\\dev\\proj\\\.cursor\\hooks\\cm-pre-tool\.cmd"$/);
+		assert.equal(leaf.name, "contextmind-cm-pre-tool");
+		assert.equal(entries.PreToolUse.matcher, profileFor("trae").hooks.toolMatcher);
+		assert.equal(entries.Stop.async, false, "no asyncEvents: a fire-and-forget Stop loses the session flush");
+		assert.ok(!("matcher" in entries.Stop), "a non-tool event must not spawn a hook per tool");
+		assert.deepEqual(entries.SessionStart.hooks[0].env, { CONTEXTMIND_HOST: "trae" });
+	});
+
+	it("recognises its own collapsed row, so a reinstall replaces instead of doubling", () => {
+		const collapsed = byEvent("trae").Stop;
+		assert.equal(isOwnHookEntry(profileFor("trae"), collapsed), true);
+	});
+
+	it("mounts the Brain user-scope, without a cwd the loader may reject", () => {
+		const profile = profileFor("trae");
+		assert.equal(profile.mcp.mountBrain, true);
+		assert.equal(profile.mcp.cwdSupported, false);
+		assert.equal(profile.mcp.scope, "user");
+		assert.ok(!/%APPDATA%/.test(profile.mcp.path), "resolveConfigFile joins against homedir, it does not expand env vars");
+		const home = mkdtempSync(join(tmpdir(), "cm-trae-home-"));
+		mkdirSync(join(home, "AppData", "Roaming", "Trae CN", "User"), { recursive: true });
+		assert.equal(
+			resolveConfigFile(profile.mcp, { home }),
+			join(home, "AppData", "Roaming", "Trae CN", "User", "mcp.json"),
+		);
+		rmSync(home, { recursive: true, force: true });
+	});
+
+	it("routes MCP governance through run_mcp, not only CallMcpTool", () => {
+		const matcher = profileFor("trae").hooks.toolMatcher;
+		assert.match(matcher, /run_mcp/, "Trae calls every MCP tool through the run_mcp meta-tool");
+		assert.match(matcher, /Shell/, "Trae's shell tool is named Shell, not Bash");
 	});
 });
 

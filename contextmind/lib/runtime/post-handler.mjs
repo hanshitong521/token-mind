@@ -33,13 +33,14 @@ function approxOutputBytes(toolOutput) {
  *
  * Cursor invokes MCP tools directly (`CallMcpTool`, tool name often `MCP:<name>`); Qoder
  * routes them through the meta-tools `mcp_call` / `mcp_get` / `mcp_list` and puts the real
- * target in `tool_input.toolName` as `mcp__<server>__<tool>`.
+ * target in `tool_input.toolName` as `mcp__<server>__<tool>`; Trae uses the single `run_mcp`
+ * meta-tool with `tool_input.server_name` + `tool_input.tool_name`.
  *
  * Without this the profile lookup sees only `mcp_call` and every Qoder MCP result falls back
  * to the generic profile, so `search_project_context` loses its 450-token budget and the
  * codegraph opt-out below never fires. Same normalisation as pre-handler.mjs MCP_CALL_TOOLS.
  */
-const MCP_CALL_TOOLS = new Set(["callmcptool", "mcp_call", "mcp_get", "mcp_list"]);
+const MCP_CALL_TOOLS = new Set(["callmcptool", "mcp_call", "mcp_get", "mcp_list", "run_mcp"]);
 
 export function governToolName(toolName, input) {
 	const raw = String(toolName ?? "");
@@ -47,7 +48,10 @@ export function governToolName(toolName, input) {
 	if (!MCP_CALL_TOOLS.has(raw.toLowerCase())) return raw;
 	const args = input?.tool_input ?? input?.arguments ?? {};
 	const inner = args?.toolName ?? args?.tool_name ?? args?.name;
-	return inner ? String(inner) : raw;
+	if (inner) return String(inner);
+	// Trae's `run_mcp` spells the target as two keys rather than one `mcp__…` string.
+	if (args?.server_name && args?.tool_name) return `mcp__${args.server_name}__${args.tool_name}`;
+	return raw;
 }
 
 export async function handlePostTool(input, { openRuntime: openRt = openRuntime } = {}) {

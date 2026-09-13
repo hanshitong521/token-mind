@@ -48,15 +48,17 @@ function argsOf(input) {
  *
  * Cursor invokes MCP tools directly (`CallMcpTool`, matched as `MCP:<name>`). Qoder routes
  * them through the meta-tools `mcp_call` / `mcp_get` / `mcp_list` and puts the real target
- * in `tool_input.toolName` as `mcp__<server>__<tool>`. Without this the MCP branches below
- * never fire on Qoder — the raw-codegraph block included.
+ * in `tool_input.toolName` as `mcp__<server>__<tool>`. Trae routes every MCP call through the
+ * single `run_mcp` meta-tool and puts the target in `tool_input.server_name` + `tool_input.tool_name`
+ * with the payload under `tool_input.args`. Without this the MCP branches below never fire on
+ * those hosts — the raw-codegraph block included.
  */
-const MCP_CALL_TOOLS = new Set(["callmcptool", "mcp_call", "mcp_get", "mcp_list"]);
+const MCP_CALL_TOOLS = new Set(["callmcptool", "mcp_call", "mcp_get", "mcp_list", "run_mcp"]);
 
 /** `mcp__context_compress__stats` -> { server: "context_compress", tool: "stats" } */
 function normalizeInnerMcp(raw, args) {
 	const text = String(raw ?? "");
-	let server = String(args?.server ?? args?.mcp_server ?? "").toLowerCase();
+	let server = String(args?.server ?? args?.mcp_server ?? args?.server_name ?? "").toLowerCase();
 	let tool = text.toLowerCase();
 	if (text.startsWith("mcp__")) {
 		const parts = text.split("__");
@@ -66,6 +68,18 @@ function normalizeInnerMcp(raw, args) {
 		}
 	}
 	return { server, tool };
+}
+
+/**
+ * The arguments of the MCP tool that is actually about to run.
+ *
+ * Each meta-tool buries them under its own key: Qoder uses `arguments`/`tool_input`,
+ * Trae's `run_mcp` uses `args`. Probing in that order answers both, and a plain
+ * (non-meta) tool call never carries an `arguments` key at the top level, so the
+ * fallback to `args` itself stays unambiguous.
+ */
+function innerArgsOf(args) {
+	return args?.arguments ?? args?.tool_input ?? args?.args ?? {};
 }
 
 function normPath(p) {
@@ -120,7 +134,7 @@ async function runPre(input, openRuntimeFn) {
 
 	const isMcpCall = MCP_CALL_TOOLS.has(name);
 	const { server: innerServer, tool: innerMcp } = normalizeInnerMcp(
-		args.toolName ?? args.tool_name,
+		args.toolName ?? args.tool_name ?? (args.server_name ? `mcp__${args.server_name}__${args.tool_name ?? ""}` : ""),
 		args,
 	);
 	const command = String(args.command ?? input.command ?? "");
@@ -153,7 +167,7 @@ async function runPre(input, openRuntimeFn) {
 	{
 		const isFetch = (isMcpCall && innerMcp.includes("context_fetch")) || name.includes("context_fetch");
 		if (isFetch) {
-			const innerArgs = isMcpCall ? (args.arguments ?? args.tool_input ?? {}) : args;
+			const innerArgs = isMcpCall ? innerArgsOf(args) : args;
 			if (innerArgs?.full === true && cfg.fetch?.allow_full !== true) {
 				record({
 					surface: "mcp",
@@ -172,7 +186,7 @@ async function runPre(input, openRuntimeFn) {
 	}
 
 	if (isMcpCall && innerMcp.includes("context_") && !innerMcp.includes("context_orient")) {
-		const innerArgs = args.arguments ?? args.tool_input ?? {};
+		const innerArgs = innerArgsOf(args);
 		try {
 			tryDenyL2ToolCache({
 				rt,
@@ -194,8 +208,8 @@ async function runPre(input, openRuntimeFn) {
 
 	{
 		const isOrient = (isMcpCall && innerMcp.includes("context_orient")) || name.includes("context_orient");
-		if (isOrient) {
-			const innerArgs = isMcpCall ? (args.arguments ?? args.tool_input ?? {}) : args;
+			if (isOrient) {
+				const innerArgs = isMcpCall ? innerArgsOf(args) : args;
 			const rawQ = String(innerArgs.query ?? innerArgs.symbol ?? "").slice(0, 200);
 			const refresh = innerArgs.refresh === true;
 			let okey = "";
@@ -517,7 +531,7 @@ async function runPre(input, openRuntimeFn) {
 		allow();
 	}
 
-	if (name === "shell" || name === "bash" || name.includes("shell")) {
+	if (name === "shell" || name === "bash" || name === "runcommand" || name.includes("shell")) {
 		if (command.trim()) {
 			if (/agent-transcripts/i.test(command)) {
 				deny(
