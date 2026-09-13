@@ -14,7 +14,7 @@
 | `cursor` | Cursor | ✅ | ✅ | ✅ | 项目级 `.cursor/hooks.json` + `.cursor/mcp.json` |
 | `qoder` | Qoder | ✅ | ✅ | ✅ | Hooks 在 `.qoder/settings.json`；MCP 在 **用户级** `~/.qoder-cn/settings.json` |
 | `codebuddy` | CodeBuddy | ✅ | ❌ | ✅ | 仅 MCP（`~/.codebuddy/mcp.json`），无 hook 治理 |
-| `workbuddy` | WorkBuddy | ✅ | ❌ | ✅ | 仅 MCP；路径 `~/.workbuddy/connectors/*/mcp.json`（uid 目录用 glob 解析，见 §3.4）；profile 声明 `mountBrain` + `cwdSupported:false` |
+| `workbuddy` | WorkBuddy | ✅ | ⚠️ | ✅ | **MCP 已通**（`~/.workbuddy/connectors/*/mcp.json`，uid 用 glob 解析，见 §3.4）。Hook **引擎存在但当前通道被关**（实测 `CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS=1` + 能力表无 hook），故 `capabilities.hooks: false`；证据与重开步骤见 §3.4 引述 |
 | `codex` | Codex | ❌ | — | — | 占位；`unverifiedReason` 写明缺实机路径，**install 不会写配置** |
 | `trae` | Trae | ❌ | — | — | 同上 |
 
@@ -149,7 +149,7 @@ post 改写：
 | Cursor | 项目 `.cursor/hooks.json` | 项目 `.cursor/mcp.json` |
 | Qoder | 项目 `.qoder/settings.json` | **用户** `~/.qoder-cn/settings.json` |
 | CodeBuddy | — | 用户 `~/.codebuddy/mcp.json` |
-| WorkBuddy | — | 用户 `~/.workbuddy/connectors/*/mcp.json`（**uid 通配**） |
+| WorkBuddy | 插件 `hooks/hooks.json`（**引擎存在，当前通道被关**，见下方引述） | 用户 `~/.workbuddy/connectors/*/mcp.json`（**uid 通配**） |
 
 `contextmind install` 会对 **每个 verified 且具备能力的 Host** 注册 ContextMind MCP + project-brain（stdio）。Qoder 用户级 MCP 是已知差异 — 修 MCP 挂载看 [`contextmind/lib/mcp-repair.mjs`](../contextmind/lib/mcp-repair.mjs)。
 
@@ -157,8 +157,14 @@ post 改写：
 
 1. **uid 通配路径** — WorkBuddy 把 connector 配置放在 `connectors/<uid>/`，uid 每装机不同。
    `hosts.json` 里写 `path: ".workbuddy/connectors/*/mcp.json"`，由 `hosts.mjs:resolveConfigFile()`
-   展开：优先取 `default`（本层既有注册所在处），其次字典序第一个；无同级目录时回退字面路径，
-   保证 `backupOnce` 仍有具体目标。**不要**再写死 `connectors/default/`。
+   展开。同级目录的**排序规则**（`pickWildcardSibling`）：
+   - 带 live 标记的目录优先（`connector-states*` / `.master.key`）— 那是 App 实际在跑的 profile；
+   - 其次是 `mcp.json` mtime 最新的；
+   - 最后才 `default`，再退字典序；无同级目录时回退字面路径，保证 `backupOnce` 仍有具体目标。
+
+   **不要**再写死 `connectors/default/`：实机上 live profile 在 UUID 目录（178 个 server +
+   `connector-states.v3.json` + `.master.key`），`default/` 是 98 个 server 的陈旧副本 ——
+   「优先 default」会把 ContextMind 装到宿主根本不读的位置。
 2. **Brain 挂载不再按 host 名判定** — 原先 `mcp-repair.mjs` 用 `profile.id === "cursor"` 决定是否注入
    `project-brain`，已改为读 `profile.mcp.mountBrain`。WorkBuddy 是第一个「用户级 + 要挂 Brain」的 Host，
    正是这行硬编码会漏掉它的场景。
@@ -166,9 +172,36 @@ post 改写：
    Brain 靠 `server.py` 的 `__file__` 自解析 `src` 根，无 `cwd` 也能起（详见 Brain 仓
    [`AGENT-HOST-COMPAT.md`](../../project-brain-agent/docs/AGENT-HOST-COMPAT.md) §3.1）。
 
-> **Hook 治理不适用**：WorkBuddy 的 `capabilities.hooks: false`，`dedupeEntriesForHost()` 对它返回 `[]`。
-> 要拿到压缩 / pre-deny，需要先在该 Host 上取得 hook 事件与输出契约的**实机证据**（`~/.workbuddy/settings.json`
-> 目前无 hooks 段），再按 §2.1 走数据流程。**不要**在拿到证据前填 `hooks` 段。
+> **Hook：机制存在，但当前会话被显式关闭**（2026-09-13 实机验证，非推测）
+>
+> WorkBuddy **有完整的 Claude-Code 风格 hook 引擎**，但 Hook Extension 在**当前 host 配置下不启用**，
+> 所以 `capabilities.hooks: false` 是**实测结论**，不是「没调研过」的占位。证据分三层：
+>
+> 1. **引擎存在** — `cli/dist/codebuddy.js` 内有 `HookExtensionLoader` 类
+>    （`type = PluginExtensionType.Hook`），加载路径常量 `"hooks/hooks.json"`，
+>    逃逸开关常量 `"CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS"`，并有 `areExtendedPluginHooksDisabled()`。
+>    同 bundle 内 `PreToolUse` 出现 37 次。
+> 2. **事件契约** — 官方插件 `hookify` / `superpowers` 的 `hooks/hooks.json` 给出真实形状：
+>    事件 `PreToolUse` · `PostToolUse` · `Stop` · `UserPromptSubmit` · `SessionStart`；
+>    形状 = Claude 嵌套 `{ hooks: { <Event>: [ { matcher?, hooks: [ { type:"command", command, timeout } ] } ] } }`；
+>    命令内用 `${CODEBUDDY_PLUGIN_ROOT}`（老插件用 `${CLAUDE_PLUGIN_ROOT}`）。
+>    Windows 下 hook 走 `buildHookSpawnOptions`，支持 `shell: powershell`，并会做 `windowsPathToUnix` 转换。
+> 3. **当前被禁用** — 运行中 hook 进程的环境里
+>    `CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS=1`，且 `CODEBUDDY_HOST_CAPABILITIES="elicitation.form,weixinpay.interception"`
+>    —— **能力列表里没有 hook**。实测：`.codebuddy/hooks.json`、`.workbuddy/hooks.json`、
+>    以及注册进 `installed_plugins.json` 的插件级 `hooks/hooks.json`（含 `pre`/`post` 双向探针）
+>    **三者均未触发**（探针脚本本身单测通过，排除脚本 bug）。
+>
+> **加载时机**：hook 配置在**会话启动时**读取 —— 运行中新建/注册一律不生效，必须重启会话。
+> 因此上面的「未触发」既可能是能力被关，也无法排除「未重启」，**两层原因叠加**。
+>
+> **下一步（要开 hook 才做）**：
+> - 找 host 侧开关（`CODEBUDDY_HOST_CAPABILITIES` 是否可由 host 配置扩展，或该 env 由谁下发）；
+> - 重启会话后重跑同一探针，得到「重启后是否触发」的干净结论；
+> - 只有拿到触发证据 + 输出契约（`hookSpecificOutput.permissionDecision` 还是别的字段）后，
+>   才把 `hooks` 段填进 profile 并 `capabilities.hooks: true`。
+>
+> **不要**在拿到证据前填 `hooks` 段 —— 一个猜出来的路径会让 `install` 把治理写到没人读的地方。
 
 ### 3.5 识别与 telemetry
 
