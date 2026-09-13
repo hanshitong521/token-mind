@@ -311,6 +311,13 @@ async function toolOrient(args, rt) {
 				note: "orient_cache_hit",
 				handleId: hit.handleId,
 				handleCreated: 0,
+				// A cache hit IS the dedup the ledger counts: the repeat query was
+				// answered without re-spawning codegraph. Hosts without a PostToolUse
+				// hook (Trae) never see the hook-side dedup, so this row is their
+				// only handle/dedup signal — leaving it 0 made the board read
+				// "built nothing, fetched nothing" while the cache was working.
+				handleFetched: hit.handleId ? 1 : 0,
+				dedupHit: 1,
 				rawTokens: hit.rawTokens ?? 0,
 				emittedTokens: emitted,
 				adapterUsed: "result_cache",
@@ -407,6 +414,8 @@ async function toolFind(args, rt) {
 				success: true,
 				note: "find_cache_hit",
 				handleId: hit.handleId,
+				handleFetched: hit.handleId ? 1 : 0,
+				dedupHit: 1,
 				rawTokens: hit.rawTokens ?? 0,
 				emittedTokens: countTokens(hit.source),
 				adapterUsed: "result_cache",
@@ -585,6 +594,8 @@ async function toolImpact(args, rt) {
 				success: true,
 				note: "impact_cache_hit",
 				handleId: hit.handleId,
+				handleFetched: hit.handleId ? 1 : 0,
+				dedupHit: 1,
 				rawTokens: hit.rawTokens ?? 0,
 				emittedTokens: countTokens(hit.source),
 				adapterUsed: "result_cache",

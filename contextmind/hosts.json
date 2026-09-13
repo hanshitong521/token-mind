@@ -138,11 +138,12 @@
       "label": "Trae",
       "verified": true,
       "capabilities": {
-        "hooks": true,
+        "hooks": false,
         "mcp": true,
         "failClosed": false,
         "outputRewrite": false
       },
+      "hooksNote": "Measured 2026-09-13: this Trae build registers .trae/hooks.json as a context asset (file watcher) but never dispatches PreToolUse/PostToolUse to external commands — a marker hook writing a file on every Shell call never fired, and the ledger holds zero hook rows across a full session. The hooks block below stays so `install`/`fix-hooks` keep the launchers ready for a build that does dispatch; until then ALL Trae governance runs server-side: MCP tools bound their own output (ResultCache + gateText) and Brain crops to 450 tokens in-process. Read-guard and hook-side output rewrite are NOT available on Trae.",
       "detect": {
         "transcriptPaths": ["\\.trae", "\\.trae-cn"],
         "configDirs": ["\\.trae", "\\.trae-cn"],
