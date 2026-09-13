@@ -314,11 +314,6 @@ export class CacheEngine {
 				detail: this.cfg.toolCachePreDeny ? "L2 blocks identical context_* MCP" : "off (enable via peak)",
 			},
 			{
-				label: "brain stop sync",
-				status: this.cfg.brainSyncOnStop ? "WARN" : "PASS",
-				detail: this.cfg.brainSyncOnStop ? "enabled (queue on stop)" : "disabled (default)",
-			},
-			{
 				label: "redis L0 mirror",
 				status: this.cfg.redisPromptMirror && this.redisUrl ? "PASS" : this.cfg.redisPromptMirror ? "WARN" : "PASS",
 				detail: this.cfg.redisPromptMirror

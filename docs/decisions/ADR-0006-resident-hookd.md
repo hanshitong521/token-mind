@@ -2,6 +2,8 @@
 
 ## Status
 
+**Superseded (2026-09-11)** by [ADR-0014](ADR-0014-tokenmind-context-os.md) for the real Runtime. **Empty stub ban remains in force.**
+
 **DISABLED (2026-09-09).** Empty-file burst left `cm-hookd.mjs` / `cmhook-client.mjs` as CRLF-only stubs (2 bytes). Windows launchers preferred `bun → cmhook-client`, which hung ≈5s (warm p50≈5301ms).
 
 ## Decision

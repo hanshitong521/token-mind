@@ -11,31 +11,33 @@
  *   contextmind fetch <handle>    retrieve governed evidence
  *   contextmind config            show / validate the resolved config
  *   contextmind benchmark         measure the Output Gate over bench fixtures
- *
- * There is deliberately no `start` / `stop`. The architecture in spec 7 has a
- * daemon and a Rust hook bridge; neither exists in this slice because neither
- * has been shown necessary — hooks are stateless subprocesses and the latency
- * budget has not been missed (see docs/reports/SLICE_REPORT.md). Adding the
- * commands before the daemon would be two lie-sized placeholders.
+ *   contextmind start             start TokenMind Runtime (localhost HTTP)
+ *   contextmind stop              stop TokenMind Runtime
  */
 
-import { spawn } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULTS, ENGINE_ROOT, REPO_ROOT, configPaths, loadConfig, validateConfig } from "./lib/config.mjs";
+import { DEFAULTS, ENGINE_ROOT, REPO_ROOT, resolveAssetsDir, resolveHooksDir, configPaths, loadConfig, validateConfig } from "./lib/config.mjs";
 import {
 	HOOK_ENTRIES,
 	HOOK_FILES,
+	HOOK_SCRIPT_DIR,
 	LEGACY_HOOK_RE,
 	MANIFEST_NAME,
 	MANIFEST_VERSION,
-	commandFor,
-	isOwnHook,
-	launcherFor,
+	dedupeEntriesForHost,
+	hookEntryPresent,
+	hookEntryFor,
+	isOwnHookEntry,
+	launcherForNodeOnly,
+	launcherForVerifiedNative,
 } from "./lib/install-plan.mjs";
 import { FORBIDDEN_STANDING_UPSTREAMS, lockUpstreams, unlockUpstreams } from "./lib/upstreams-lock.mjs";
+import { hostProfiles, hookEventName, mcpConfigFile, resolveConfigFile, supports } from "./lib/hosts.mjs";
 import { engineStatus } from "./lib/engine.mjs";
 import { openHandles } from "./lib/handles.mjs";
 import { defaultDbPath as defaultTelemetryPath, formatSummary, openTelemetry } from "./lib/telemetry.mjs";
@@ -43,15 +45,18 @@ import { probeCodegraphSpawn } from "./lib/codegraph-spawn.mjs";
 import { probeAdapters } from "./lib/probe.mjs";
 import { countTokens, TOKENIZER_ID } from "./lib/tokens.mjs";
 import { runOutputGate } from "./lib/output-gate.mjs";
+import { isListening, startDaemon, stopDaemon, runtimeHost, runtimePort } from "./lib/runtime/lifecycle.mjs";
 import { Dedup } from "./lib/dedup.mjs";
 import { classify } from "./lib/classify.mjs";
+import { contextmindStdioEntry, repairMcpMounts } from "./lib/mcp-repair.mjs";
+import { wrapNodeBin } from "./lib/shell-guard.mjs";
 import { validateActiveTaskBundle } from "./lib/task-bundle.mjs";
 import { projectScorecardView } from "./lib/stack-scorecard.mjs";
 import { initAgentStateScaffold, syncAgentStateFromTaskBundle } from "./lib/agent-state.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOOKS_SRC = join(REPO_ROOT, "cursor", "hooks");
-const ASSETS_SRC = join(REPO_ROOT, "cursor");
+const HOOKS_SRC = resolveHooksDir(HERE);
+const ASSETS_SRC = resolveAssetsDir(HERE);
 
 // ─── helpers ───
 
@@ -78,15 +83,302 @@ function backupOnce(path, suffix) {
 
 // ─── install ───
 
-function install(projectRoot, flags = {}) {
+function parseHookStdout(stdout) {
+	const raw = String(stdout ?? "").trim();
+	if (!raw.startsWith("{")) return { ok: false, reason: "not_json", sample: raw.slice(0, 120) };
+	try {
+		JSON.parse(raw);
+		return { ok: true };
+	} catch (err) {
+		return { ok: false, reason: err.message, sample: raw.slice(0, 120) };
+	}
+}
+
+function verifyCmhookJson(hooksDir) {
+	const exe = join(hooksDir, "cmhook.exe");
+	if (!existsSync(exe)) return { ok: false, reason: "no_cmhook_exe" };
+	const cases = [
+		["cm-pre-tool", { tool_name: "Shell", tool_input: { command: "echo ok" } }],
+		["cm-pre-tool", { tool_name: "Shell", tool_input: { command: "git status -sb" } }],
+		["cm-post-tool", { tool_name: "Shell", tool_output: "ok\n" }],
+	];
+	for (const [hook, partial] of cases) {
+		const sampleInput = JSON.stringify({
+			...partial,
+			cwd: hooksDir,
+			workspace_roots: [hooksDir],
+		});
+		const r = spawnSync(exe, [hook], {
+			input: sampleInput,
+			encoding: "utf8",
+			timeout: 5_000,
+			windowsHide: true,
+		});
+		if (r.status !== 0) return { ok: false, reason: `${hook}:exit_${r.status}` };
+		const parsed = parseHookStdout(r.stdout);
+		if (!parsed.ok) return { ok: false, reason: `${hook}:${parsed.reason}`, sample: parsed.sample };
+	}
+	return { ok: true };
+}
+
+/**
+ * One binary serves every host, but the hosts do not agree on the egress envelope:
+ * a Claude-shaped host ignores Cursor's `{permission}` object, so a native client that
+ * only speaks Cursor's contract silently drops every deny there — governance looks
+ * installed and does nothing. Prove the translation per host stamp before enabling it.
+ */
+function verifyCmhookEgress(hooksDir, profiles) {
+	const exe = join(hooksDir, "cmhook.exe");
+	if (!existsSync(exe)) return { ok: false, reason: "no_cmhook_exe" };
+	const sampleInput = JSON.stringify({
+		tool_name: "Shell",
+		tool_input: { command: "echo ok" },
+		cwd: hooksDir,
+		workspace_roots: [hooksDir],
+	});
+	const seen = new Set();
+	for (const profile of profiles) {
+		const env = { ...(profile.hooks?.env ?? {}) };
+		const nested = profile.hooks?.file?.entryShape === "claude-nested";
+		const key = `${env.CONTEXTMIND_HOST ?? ""}|${nested}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const r = spawnSync(exe, ["cm-pre-tool"], {
+			input: sampleInput,
+			encoding: "utf8",
+			timeout: 5_000,
+			windowsHide: true,
+			env: { ...process.env, ...env },
+		});
+		if (r.status !== 0) return { ok: false, reason: `${profile.id}:exit_${r.status}` };
+		const out = String(r.stdout ?? "");
+		if (nested && !out.includes("hookSpecificOutput")) {
+			return { ok: false, reason: `${profile.id}:cursor_contract_only`, sample: out.slice(0, 120) };
+		}
+	}
+	return { ok: true };
+}
+
+function applyCmhookLauncherPolicy(hooksDir, verifyResult) {
+	const marker = join(hooksDir, ".cmhook-json-ok");
+	const exe = join(hooksDir, "cmhook.exe");
+	if (verifyResult.ok) {
+		writeFileSync(marker, `${new Date().toISOString()}\n`);
+		return { mode: "cmhook" };
+	}
+	try {
+		if (existsSync(marker)) rmSync(marker, { force: true });
+	} catch {
+		/* ok */
+	}
+	const bak = `${exe}.disabled`;
+	if (existsSync(exe)) {
+		try {
+			if (existsSync(bak)) rmSync(bak, { force: true });
+			renameSync(exe, bak);
+		} catch {
+			/* ok */
+		}
+	}
+	return { mode: "node-only", reason: verifyResult.reason };
+}
+
+/** Unblock Cursor when cmhook returns invalid JSON — node-only .cmd, disable native client. */
+function fixHooks(projectRoot) {
+	const hooksDest = join(projectRoot, ".cursor", "hooks");
+	if (!existsSync(hooksDest)) {
+		console.error(`no hooks dir: ${hooksDest}`);
+		return 1;
+	}
+	applyCmhookLauncherPolicy(hooksDest, { ok: false, reason: "fix-hooks" });
+	for (const file of HOOK_FILES) {
+		if (file.endsWith(".mjs")) {
+			writeFileSync(
+				join(hooksDest, file.replace(/\.mjs$/, ".cmd")),
+				launcherForNodeOnly(file.replace(/\.mjs$/, "")),
+			);
+		}
+	}
+	console.log(`fix-hooks: node-only launchers written under ${hooksDest}`);
+	console.log("Reload the Cursor window, then: contextmind start && contextmind install [dir]");
+	return 0;
+}
+
+/** Where a user-scope host keeps its settings; set by `install --home` for a dry run. */
+function userHome() {
+	return process.env.CONTEXTMIND_INSTALL_HOME || process.env.USERPROFILE || process.env.HOME || homedir();
+}
+
+/**
+ * Write this host's hook entries into the file its own loader reads.
+ *
+ * Everything host-specific is data: which file (and whether it is project- or
+ * user-scope), which key holds the hook list, which extra root fields the host
+ * expects, what its events are spelled as, and what a row looks like. What is
+ * left here is the merge, and it keeps two rules the Cursor install learned the
+ * hard way — group by event before filtering, because two rows sharing an event
+ * each sweep the other's fresh entry out of the list and the install silently
+ * loses governance; and strip only our own entries, so a hook the user wrote by
+ * hand survives a reinstall.
+ */
+function installHooksForHost(profile, { projectRoot, native = false } = {}) {
+	const target = profile.hooks?.file;
+	const file = resolveConfigFile(target, { projectRoot, home: userHome() });
+	if (!file) return { host: profile.id, file: null, scope: null, entries: 0, backup: null, retired: [] };
+	mkdirSync(dirname(file), { recursive: true });
+	const backup = backupOnce(file, ".contextmind-backup");
+	const doc = readJson(file, {}) ?? {};
+	for (const [key, value] of Object.entries(target.rootFields ?? {})) doc[key] = value;
+
+	const keyPath = target.keyPath || "hooks";
+	if (!doc[keyPath] || typeof doc[keyPath] !== "object") doc[keyPath] = {};
+	const hooksRoot = doc[keyPath];
+
+	const retired = new Set();
+	const grouped = new Map();
+	for (const entry of dedupeEntriesForHost(profile, HOOK_ENTRIES)) {
+		const list = grouped.get(entry.event) ?? [];
+		list.push(entry);
+		grouped.set(entry.event, list);
+	}
+
+	let written = 0;
+	for (const [event, entries] of grouped) {
+		const list = Array.isArray(hooksRoot[event]) ? hooksRoot[event] : [];
+		const kept = list.filter((h) => {
+			if (isOwnHookEntry(profile, h)) return false;
+			if (LEGACY_HOOK_RE.test(String(h?.command ?? ""))) {
+				retired.add(String(h.command));
+				return false;
+			}
+			return true;
+		});
+		for (const entry of entries) {
+			const row = hookEntryFor(profile, {
+				hook: entry.hook,
+				event,
+				projectRoot,
+				matcher: entry.matcher,
+				failClosed: entry.failClosed,
+				native,
+			});
+			if (!row) continue;
+			kept.push(row);
+			written += 1;
+		}
+		hooksRoot[event] = kept;
+	}
+	writeJson(file, doc);
+	return {
+		host: profile.id,
+		file,
+		scope: target.scope ?? "project",
+		entries: written,
+		backup: existsSync(backup) ? backup : null,
+		retired: [...retired],
+	};
+}
+
+/** True when the host keeps config somewhere on this box already (its dir exists). */
+function hostPresent(profile, { projectRoot, home }) {
+	const targets = [profile.mcp, profile.hooks?.file].filter((t) => t?.path);
+	return targets.some((t) => {
+		const file = resolveConfigFile(t, { projectRoot, home });
+		return file && existsSync(dirname(file));
+	});
+}
+
+/**
+ * Which hosts this install may write to.
+ *
+ * A profile is a claim about a host's config paths, so writing one for a tool that
+ * is not on this machine creates the file it describes (~/.codex/..., ~/.trae/...)
+ * and teaches the next reader to trust a path nobody verified. Default is
+ * therefore "verified AND its config directory already exists"; `--hosts=a,b`
+ * overrides that for a deliberate install.
+ */
+function selectInstallHosts(flags, projectRoot) {
+	const home = process.env.USERPROFILE || process.env.HOME || homedir();
+	const wanted =
+		typeof flags.hosts === "string"
+			? flags.hosts
+					.split(",")
+					.map((s) => s.trim().toLowerCase())
+					.filter(Boolean)
+			: null;
+	return hostProfiles()
+		.filter((h) => h.verified === true)
+		.filter((h) => (wanted ? wanted.includes(h.id) : hostPresent(h, { projectRoot, home })));
+}
+
+/**
+ * Register the MCP server wherever a host can see it.
+ *
+ * Two scopes exist because the hosts do: Cursor reads a project `.cursor/mcp.json`,
+ * while Qoder only ever reads MCP servers out of the machine-wide
+ * `~/.qoder-cn/settings.json`. A user-scope entry therefore pins
+ * CONTEXTMIND_PROJECT_DIR to the project being installed — the same trade-off the
+ * existing context-compress entry on this box already makes — and `doctor` reports
+ * that pinning instead of pretending the registration is per-project.
+ *
+ * Unverified profiles are skipped with a reason: writing a guessed path produces a
+ * server that is registered, visible and never correct.
+ */
+function registerMcpServers({ projectRoot, serverPath, hosts }) {
+	const results = [];
+	const projCfg = readJson(join(projectRoot, ".contextmind.json"));
+	for (const profile of hosts.filter((h) => supports(h, "mcp"))) {
+		if (profile.verified !== true) {
+			results.push({
+				host: profile.id,
+				skipped: profile.unverifiedReason || "profile not verified against a real install",
+			});
+			continue;
+		}
+		const file = mcpConfigFile(profile.id, { projectRoot, home: userHome() });
+		const keyPath = profile.mcp.keyPath || "mcpServers";
+		const backup = backupOnce(file, ".contextmind-mcp-backup");
+		const doc = readJson(file, {}) ?? {};
+		if (!doc[keyPath] || typeof doc[keyPath] !== "object") doc[keyPath] = {};
+		const env = { CONTEXTMIND_PROJECT_DIR: resolve(projectRoot) };
+		if (projCfg?.cache_engine?.kvUrl) env.CONTEXTMIND_KV_BRIDGE_URL = String(projCfg.cache_engine.kvUrl);
+		const prevEnv = doc[keyPath]?.contextmind?.env;
+		if (prevEnv && typeof prevEnv === "object") {
+			for (const [k, v] of Object.entries(prevEnv)) {
+				if (v != null && env[k] === undefined) env[k] = v;
+			}
+		}
+		doc[keyPath].contextmind = contextmindStdioEntry(
+			projectRoot,
+			serverPath,
+			profile,
+			projCfg,
+			doc[keyPath]?.contextmind,
+		);
+		writeJson(file, doc);
+		results.push({
+			host: profile.id,
+			file,
+			scope: profile.mcp.scope,
+			backup: existsSync(backup) ? backup : null,
+		});
+	}
+	return results;
+}
+
+async function install(projectRoot, flags = {}) {
+	const hosts = selectInstallHosts(flags, projectRoot);
 	const cursorDir = join(projectRoot, ".cursor");
 	mkdirSync(cursorDir, { recursive: true });
 
-	const hooksJson = join(cursorDir, "hooks.json");
-	const backup = backupOnce(hooksJson, ".contextmind-backup");
-
 	// Library.
 	const libDest = join(cursorDir, "contextmind");
+	if (resolve(libDest) === resolve(HERE)) {
+		console.error(
+			"[contextmind install] refused in-place: would delete the library being executed. Run from SSOT: token-mind/contextmind/cli.mjs install <project>",
+		);
+		return 1;
+	}
 	rmSync(libDest, { recursive: true, force: true });
 	cpSync(HERE, libDest, {
 		recursive: true,
@@ -100,49 +392,58 @@ function install(projectRoot, flags = {}) {
 	for (const file of HOOK_FILES) {
 		copyFileSync(join(HOOKS_SRC, file), join(hooksDest, file));
 		written.push(join(".cursor", "hooks", file));
-		writeFileSync(join(hooksDest, file.replace(/\.mjs$/, ".cmd")), launcherFor(file.replace(/\.mjs$/, "")));
-		written.push(join(".cursor", "hooks", file.replace(/\.mjs$/, ".cmd")));
-	}
-
-	// hooks.json merge.
-	const existing = readJson(hooksJson, { version: 1, hooks: {} }) ?? { version: 1, hooks: {} };
-	existing.version = 1;
-	existing.hooks = existing.hooks ?? {};
-	const retired = new Set();
-
-	// Group by event first. Filtering inside the entry loop was a real bug: two
-	// entries sharing an event (preToolUse has Read/Grep/Glob/Shell and Task)
-	// each swept the other's freshly-added entry out of the list, and the
-	// installed hooks.json silently lost Read and Shell governance — which is
-	// most of the point of the slice. Grouping means the user's entries are
-	// filtered exactly once per event.
-	const byEvent = new Map();
-	for (const entry of HOOK_ENTRIES) {
-		const list = byEvent.get(entry.event) ?? [];
-		list.push(entry);
-		byEvent.set(entry.event, list);
-	}
-
-	for (const [event, entries] of byEvent) {
-		const list = existing.hooks[event] ?? [];
-		const kept = list.filter((h) => {
-			if (isOwnHook(h)) return false;
-			if (LEGACY_HOOK_RE.test(String(h?.command ?? ""))) {
-				retired.add(String(h.command));
-				return false;
-			}
-			return true;
-		});
-		for (const entry of entries) {
-			kept.push({
-				command: commandFor(entry.hook),
-				...(entry.matcher ? { matcher: entry.matcher } : {}),
-				failClosed: entry.failClosed,
-			});
+		if (file.endsWith(".mjs")) {
+			writeFileSync(join(hooksDest, file.replace(/\.mjs$/, ".cmd")), launcherForNodeOnly(file.replace(/\.mjs$/, "")));
+			written.push(join(".cursor", "hooks", file.replace(/\.mjs$/, ".cmd")));
 		}
-		existing.hooks[event] = kept;
 	}
-	writeJson(hooksJson, existing);
+	const cmhookSrc = join(HOOKS_SRC, "cmhook.exe");
+	if (existsSync(cmhookSrc)) {
+		copyFileSync(cmhookSrc, join(hooksDest, "cmhook.exe"));
+		written.push(join(".cursor", "hooks", "cmhook.exe"));
+	}
+
+	let hookClientMode = "node-only";
+	try {
+		await startDaemon({ waitMs: 5_000, converge: true });
+		const verify = verifyCmhookJson(hooksDest);
+		// One binary serves every host, so a build that only speaks Cursor's contract must not
+		// pass: it would silently no-op the decisions of each nested-shape host installed here.
+		const verified = verify.ok ? verifyCmhookEgress(hooksDest, hosts.filter((h) => supports(h, "hooks"))) : verify;
+		const policy = applyCmhookLauncherPolicy(hooksDest, verified);
+		hookClientMode = policy.mode;
+		const pickLauncher = verified.ok ? launcherForVerifiedNative : launcherForNodeOnly;
+		for (const file of HOOK_FILES) {
+			if (file.endsWith(".mjs")) {
+				writeFileSync(
+					join(hooksDest, file.replace(/\.mjs$/, ".cmd")),
+					pickLauncher(file.replace(/\.mjs$/, "")),
+				);
+			}
+		}
+		if (!verified.ok) {
+			console.warn(`[contextmind install] cmhook verify FAIL (${verified.reason}); using node thin client only`);
+		} else {
+			console.log("[contextmind install] cmhook verify PASS; native client enabled");
+		}
+	} catch (err) {
+		console.warn(`[contextmind install] cmhook verify skipped: ${err?.message ?? err}`);
+	}
+
+	// One merge per host that has a hook surface. Which file, which event spelling and
+	// which row shape are the profile's business; the grouping-by-event rule inside
+	// installHooksForHost is what keeps a host with two preToolUse rows (Read/Grep/Glob/
+	// Shell and Task) from sweeping its own fresh entries back out again.
+	const hookInstalls = [];
+	const retired = new Set();
+	for (const profile of hosts.filter((h) => supports(h, "hooks"))) {
+		const result = installHooksForHost(profile, {
+			projectRoot,
+			native: hookClientMode === "cmhook",
+		});
+		for (const cmd of result.retired) retired.add(cmd);
+		hookInstalls.push(result);
+	}
 
 	// Rules, skills, agents. Skills live in their own directories, so the copy
 	// has to follow the tree rather than assume a flat file list.
@@ -174,58 +475,96 @@ function install(projectRoot, flags = {}) {
 		}
 	}
 
-	// MCP server registration (S4, decision 5C): the seven-tool surface is the
-	// only ContextMind entry in mcp.json. Other servers the user configured
-	// stay — removing them is a call for the owner, not the installer; doctor
-	// reports the schema tax of anything still visible.
-	const mcpJson = join(cursorDir, "mcp.json");
-	backupOnce(mcpJson, ".contextmind-mcp-backup");
-	const mcp = readJson(mcpJson, { mcpServers: {} }) ?? { mcpServers: {} };
-	if (!mcp.mcpServers || typeof mcp.mcpServers !== "object") mcp.mcpServers = {};
-	const cmEnv = { CONTEXTMIND_PROJECT_DIR: resolve(projectRoot) };
-	const projCfg = readJson(join(projectRoot, ".contextmind.json"));
-	if (projCfg?.cache_engine?.kvUrl) {
-		cmEnv.CONTEXTMIND_KV_BRIDGE_URL = String(projCfg.cache_engine.kvUrl);
-	}
-	const prevEnv = mcp.mcpServers?.contextmind?.env;
-	if (prevEnv && typeof prevEnv === "object") {
-		for (const [k, v] of Object.entries(prevEnv)) {
-			if (v != null && cmEnv[k] === undefined) cmEnv[k] = v;
-		}
-	}
-	mcp.mcpServers.contextmind = {
-		type: "stdio",
-		command: process.execPath,
-		args: [join(cursorDir, "contextmind", "mcp-server.mjs")],
-		env: cmEnv,
-	};
-	writeJson(mcpJson, mcp);
+	// MCP server registration (S4, decision 5C), now for every host that has a
+	// place to put it: the Cursor-only file is why the Qoder column of the ledger
+	// could never hold a governed MCP call. ContextMind's entry is the only one
+	// touched; other servers the user configured stay — removing them is a call
+	// for the owner, not the installer.
+	const mcpServers = registerMcpServers({
+		projectRoot,
+		serverPath: join(libDest, "mcp-server.mjs"),
+		hosts,
+	});
 
 	// Quarantine raw upstreams (codegraph) out of the agent-visible catalogue:
 	// leaving them registered duplicates the tool surface (schema tax) and lets
 	// an agent bypass preToolUse when Cursor exposes MCP without hook coverage.
 	// The entries are preserved in a lock file and restored by uninstall.
-	const { quarantined, lockPath } = lockUpstreams(mcpJson);
+	const cursorMcp = mcpServers.find((r) => r.host === "cursor");
+	const { quarantined, lockPath } = lockUpstreams(cursorMcp ? cursorMcp.file : join(cursorDir, "mcp.json"));
 
 	writeJson(join(cursorDir, MANIFEST_NAME), {
 		manifest_version: MANIFEST_VERSION,
 		installed_at: new Date().toISOString(),
 		source_repo: REPO_ROOT,
 		lib_dir: ".cursor/contextmind",
+		hosts_installed: hosts.map((h) => h.id),
 		files: written,
 		dirs,
 		retired_hooks: [...retired],
 		hook_events: [...new Set(HOOK_ENTRIES.map((e) => e.event))],
-		backup: existsSync(backup) ? backup : null,
+		// `hooks` rows are shared by every host — each hook script lives under
+		// .cursor/hooks and reads its contract from CONTEXTMIND_HOST.
+		hooks_scripts_dir: HOOK_SCRIPT_DIR,
+		hooks_installs: hookInstalls,
+		backup: hookInstalls.find((h) => h.host === "cursor")?.backup ?? null,
+		mcp_registrations: mcpServers,
 	});
 
 	console.log(`ContextMind installed into ${projectRoot}`);
-	console.log(`  hooks:    ${HOOK_FILES.length} files -> .cursor/hooks/`);
+	console.log(`  hosts:    ${hosts.map((h) => h.id).join(", ") || "(none selected)"}`);
+	console.log(`  hooks:    ${HOOK_FILES.length} files -> ${HOOK_SCRIPT_DIR}/`);
 	console.log(`  library:  .cursor/contextmind/`);
 	console.log(`  events:   ${[...new Set(HOOK_ENTRIES.map((e) => e.event))].join(", ")}`);
+	for (const hi of hookInstalls) {
+		console.log(`  hooks:    ${hi.host} [${hi.scope}] ${hi.entries} entries -> ${hi.file}`);
+	}
+	for (const reg of mcpServers) {
+		if (reg.skipped) {
+			console.log(`  mcp:      ${reg.host} skipped — ${reg.skipped}`);
+			continue;
+		}
+		console.log(`  mcp:      ${reg.host} [${reg.scope}] -> ${reg.file}`);
+		if (reg.scope === "user") {
+			console.log(
+				`            machine-wide: pinned to CONTEXTMIND_PROJECT_DIR=${resolve(projectRoot)}; reload ${reg.host} to load it`,
+			);
+		}
+	}
 	if (retired.size > 0) console.log(`  retired:  ${[...retired].join(", ")} (still in the backup)`);
 	if (!flags.rules) console.log("  rules:    not copied (pass --rules to add the always rule)");
-	if (existsSync(backup)) console.log(`  backup:   ${backup}`);
+	const backups = [...hookInstalls.map((h) => h.backup), ...mcpServers.map((r) => r.backup)].filter(Boolean);
+	for (const b of backups) console.log(`  backup:   ${b}`);
+	return 0;
+}
+
+/** Re-register MCP mounts without wiping the library (node path + brain stdio). */
+function repairMcp(projectRoot, flags = {}) {
+	const libPath = join(projectRoot, ".cursor", "contextmind", "mcp-server.mjs");
+	const serverPath = existsSync(libPath) ? libPath : join(HERE, "mcp-server.mjs");
+	const hosts = selectInstallHosts(flags, projectRoot);
+	const { node, results } = repairMcpMounts({
+		projectRoot,
+		serverPath,
+		hosts,
+		readJson,
+		writeJson,
+		backupOnce,
+	});
+	console.log(`MCP repair — node: ${node}`);
+	for (const r of results) {
+		if (r.skipped) {
+			console.log(`  ${r.host}: skipped — ${r.skipped}`);
+			continue;
+		}
+		if (r.ok) {
+			console.log(`  ${r.host}: ${r.detail}`);
+			continue;
+		}
+		console.log(`  ${r.host} [${r.scope}]: ${r.changes.join(", ")}`);
+		console.log(`           -> ${r.file}`);
+	}
+	console.log("Reload MCP in each host (Cursor: Reload MCP; Qoder: restart).");
 	return 0;
 }
 
@@ -267,37 +606,86 @@ function uninstall(projectRoot) {
 	// still shows up in Cursor's skill list.
 	for (const rel of manifest.dirs ?? []) rmSync(join(projectRoot, rel), { recursive: true, force: true });
 
-	// Strip only our hook entries; anything else the user configured stays.
-	const hooksJson = join(cursorDir, "hooks.json");
-	const existing = readJson(hooksJson);
-	if (existing?.hooks) {
-		for (const [event, list] of Object.entries(existing.hooks)) {
-			const kept = (list ?? []).filter((h) => !isOwnHook(h));
-			if (kept.length > 0) existing.hooks[event] = kept;
-			else delete existing.hooks[event];
+	// Strip only our hook entries, from every host file install may have written;
+	// anything else the user configured stays. A Claude-shaped host keeps its rows
+	// inside its own settings file under its own event spellings, so this has to
+	// mirror installHooksForHost or the host reports a hook it can no longer find.
+	const hookStripped = [];
+	for (const profile of hostProfiles().filter((h) => supports(h, "hooks") && h.verified === true)) {
+		const target = profile.hooks?.file;
+		const file = resolveConfigFile(target, { projectRoot, home: userHome() });
+		const doc = readJson(file);
+		const keyPath = target?.keyPath || "hooks";
+		const hooksRoot = doc?.[keyPath];
+		if (!file || !hooksRoot || typeof hooksRoot !== "object") continue;
+		let removed = 0;
+		for (const [event, list] of Object.entries(hooksRoot)) {
+			if (!Array.isArray(list)) continue;
+			const kept = list.filter((h) => {
+				if (!isOwnHookEntry(profile, h)) return true;
+				removed += 1;
+				return false;
+			});
+			if (kept.length > 0) hooksRoot[event] = kept;
+			else delete hooksRoot[event];
 		}
-		writeJson(hooksJson, existing);
+		if (removed > 0) writeJson(file, doc);
+		hookStripped.push({ host: profile.id, file, removed });
 	}
 
-	// Strip only our mcp.json entry; the file itself and other servers stay.
+	// Strip only our entry from each host's MCP file; the files themselves and
+	// every other server stay. This has to mirror registerMcpServers or uninstall
+	// leaves a registered-but-deleted server behind, which hosts report as a
+	// startup error long after the project is gone.
 	const mcpJson = join(cursorDir, "mcp.json");
-	const mcp = readJson(mcpJson);
-	if (mcp?.mcpServers?.contextmind) {
-		delete mcp.mcpServers.contextmind;
-		if (Object.keys(mcp.mcpServers).length === 0) delete mcp.mcpServers;
-		writeJson(mcpJson, mcp);
+	const stripped = [];
+	for (const profile of hostProfiles().filter((h) => supports(h, "mcp") && h.verified === true)) {
+		const file = mcpConfigFile(profile.id, { projectRoot, home: userHome() });
+		const keyPath = profile.mcp.keyPath || "mcpServers";
+		const doc = readJson(file);
+		if (!doc?.[keyPath]?.contextmind) continue;
+		delete doc[keyPath].contextmind;
+		if (Object.keys(doc[keyPath]).length === 0) delete doc[keyPath];
+		writeJson(file, doc);
+		stripped.push(`${profile.id}[${profile.mcp.scope}]`);
 	}
 	// Put back whatever install quarantined, so uninstall is a true inverse.
 	const { restored } = unlockUpstreams(mcpJson);
 
 	rmSync(join(cursorDir, MANIFEST_NAME), { force: true });
 	console.log(`ContextMind removed from ${projectRoot}`);
+	for (const h of hookStripped.filter((x) => x.removed > 0)) {
+		console.log(`  hooks:    ${h.host} removed ${h.removed} entries <- ${h.file}`);
+	}
+	if (stripped.length > 0) console.log(`  mcp:      entry removed from ${stripped.join(", ")}`);
 	if (restored.length > 0) console.log(`  upstreams: restored ${restored.join(", ")}`);
 	console.log("  handle/telemetry databases left in place; delete .contextmind/ to drop them too.");
 	return 0;
 }
 
 // ─── doctor ───
+
+async function cmdStart() {
+	const r = await startDaemon({ waitMs: 5_000, converge: true });
+	if (!r.ok) {
+		console.error(`start failed: ${r.error ?? "unknown"}`);
+		return 1;
+	}
+	for (const c of r.converged ?? []) {
+		console.log(`converged stale daemon :${c.port} — ${c.script} stamp=${c.stamp}`);
+	}
+	console.log(
+		`TokenMind Runtime ${r.already ? "already listening" : "started"} at http://${r.host}:${r.port}/health` +
+			(r.port === runtimePort() ? "" : ` (preferred ${runtimePort()} is held by another listener)`),
+	);
+	return 0;
+}
+
+async function cmdStop() {
+	await stopDaemon();
+	console.log("TokenMind Runtime stop requested");
+	return 0;
+}
 
 function check(label, fn) {
 	try {
@@ -307,7 +695,7 @@ function check(label, fn) {
 	}
 }
 
-function doctor(projectRoot) {
+async function doctor(projectRoot) {
 	const cfg = loadConfig(projectRoot);
 	const rows = [];
 
@@ -341,22 +729,27 @@ function doctor(projectRoot) {
 		}),
 	);
 
-	rows.push(
-		check("hooks installed", () => {
-			const hooksJson = readJson(join(projectRoot, ".cursor", "hooks.json"));
-			if (!hooksJson?.hooks) return { status: "WARN", detail: "no .cursor/hooks.json" };
-			const missing = [];
-			for (const entry of HOOK_ENTRIES) {
-				const list = hooksJson.hooks[entry.event] ?? [];
-				const present = list.some((h) => String(h?.command ?? "").includes(`hooks/${entry.hook}`));
-				if (!present) missing.push(entry.event);
-			}
-			if (missing.length === HOOK_ENTRIES.length) return { status: "WARN", detail: "not installed (run: contextmind install)" };
-			return missing.length === 0
-				? { status: "PASS", detail: `${HOOK_ENTRIES.length} entries` }
-				: { status: "FAIL", detail: `missing events: ${missing.join(", ")}` };
-		}),
-	);
+	for (const profile of hostProfiles().filter((h) => supports(h, "hooks") && h.verified === true)) {
+		rows.push(
+			check(`hooks installed (${profile.id})`, () => {
+				const target = profile.hooks?.file;
+				const file = resolveConfigFile(target, { projectRoot, home: userHome() });
+				const hooksRoot = file ? readJson(file)?.[target?.keyPath || "hooks"] : null;
+				if (!hooksRoot || typeof hooksRoot !== "object") return { status: "WARN", detail: `no ${file}` };
+				const wanted = dedupeEntriesForHost(profile, HOOK_ENTRIES);
+				// Config keys are the HOST's event names (Qoder: PreToolUse), not the canonical ones.
+				const present = wanted.filter((e) => {
+					const list = hooksRoot[hookEventName(profile, e.event) ?? e.event] ?? [];
+					return Array.isArray(list) && list.some((h) => hookEntryPresent(h, e.hook));
+				});
+				const missing = wanted.filter((e) => !present.includes(e));
+				if (missing.length === wanted.length) return { status: "WARN", detail: "not installed (run: contextmind install)" };
+				return missing.length === 0
+					? { status: "PASS", detail: `${wanted.length} entries -> ${file}` }
+					: { status: "FAIL", detail: `missing: ${missing.map((m) => `${m.event}/${m.hook}`).join(", ")}` };
+			}),
+		);
+	}
 
 	rows.push(
 		check("hook scripts present", () => {
@@ -394,17 +787,27 @@ function doctor(projectRoot) {
 	);
 
 	rows.push(
-		check("codegraph spawn (orient)", () => {
-			if (cfg.adapters?.codegraph?.enabled === false) return { status: "PASS", detail: "codegraph disabled" };
-			const probe = probeCodegraphSpawn({ ...cfg, project_root: projectRoot }, { timeoutMs: 25_000 });
-			if (probe.ok) return { status: "PASS", detail: probe.detail };
+		await (async () => {
+			const label = "codegraph spawn (orient)";
+			if (cfg.adapters?.codegraph?.enabled === false) {
+				return { label, status: "PASS", detail: "codegraph disabled" };
+			}
+			const projectCfg = { ...cfg, project_root: projectRoot };
+			try {
+				const { probeSidecar } = await import("./lib/codegraph-sidecar.mjs");
+				const side = await probeSidecar(projectCfg, { spawnIfNeeded: false });
+				if (side.ok) return { label, status: "PASS", detail: side.detail };
+			} catch {
+				/* CLI fallback */
+			}
+			const probe = probeCodegraphSpawn(projectCfg, { timeoutMs: 25_000 });
+			if (probe.ok) return { label, status: "PASS", detail: probe.detail };
 			const bin = cfg.adapters?.codegraph?.bin ?? "codegraph";
-			const critical =
-				process.platform === "win32" && /\.ps1$/i.test(String(bin));
+			const critical = process.platform === "win32" && /\.ps1$/i.test(String(bin));
 			return critical
-				? { status: "FAIL", detail: `${probe.detail} — orient will hang; fix PowerShell -File spawn` }
-				: { status: "WARN", detail: probe.detail };
-		}),
+				? { label, status: "FAIL", detail: `${probe.detail} — orient will hang; fix PowerShell -File spawn` }
+				: { label, status: "WARN", detail: probe.detail };
+		})(),
 	);
 
 	rows.push(
@@ -453,6 +856,74 @@ function doctor(projectRoot) {
 				: { status: "WARN", detail: `7 tools; upstreams still visible: ${upstreams.join(", ")}` };
 		}),
 	);
+
+	rows.push(
+		check("hook JSON (node preTool)", () => {
+			const hooksDest = join(projectRoot, ".cursor", "hooks");
+			const script = join(hooksDest, "cm-pre-tool.mjs");
+			if (!existsSync(script)) return { status: "FAIL", detail: "missing cm-pre-tool.mjs" };
+			const sample = JSON.stringify({
+				tool_name: "Shell",
+				tool_input: { command: "echo ok" },
+				cwd: projectRoot,
+				workspace_roots: [projectRoot],
+			});
+			const r = spawnSync(process.execPath, [script], {
+				input: sample,
+				encoding: "utf8",
+				timeout: 8_000,
+				env: { ...process.env, CONTEXTMIND_HOME: join(projectRoot, ".cursor", "contextmind") },
+				windowsHide: true,
+			});
+			if (r.status !== 0) return { status: "FAIL", detail: `exit ${r.status} ${(r.stderr || "").slice(0, 120)}` };
+			const parsed = parseHookStdout(r.stdout);
+			return parsed.ok
+				? { status: "PASS", detail: "cm-pre-tool.mjs emits valid JSON" }
+				: { status: "FAIL", detail: `${parsed.reason}: ${parsed.sample ?? ""}` };
+		}),
+	);
+
+	rows.push(
+		check("hook launcher policy", () => {
+			const hooksDest = join(projectRoot, ".cursor", "hooks");
+			const exe = join(hooksDest, "cmhook.exe");
+			const marker = join(hooksDest, ".cmhook-json-ok");
+			if (!existsSync(exe)) return { status: "PASS", detail: "node-only (no cmhook.exe)" };
+			if (existsSync(marker)) return { status: "PASS", detail: "cmhook.exe + verify marker" };
+			return {
+				status: "FAIL",
+				detail: "cmhook.exe without .cmhook-json-ok — run: contextmind fix-hooks [dir]",
+			};
+		}),
+	);
+
+	rows.push({
+		label: "cmhook.exe (native client)",
+		status: (() => {
+			const hooksDest = join(projectRoot, ".cursor", "hooks");
+			const exe = join(hooksDest, "cmhook.exe");
+			const marker = join(hooksDest, ".cmhook-json-ok");
+			if (!existsSync(exe)) return "WARN";
+			return existsSync(marker) ? "PASS" : "FAIL";
+		})(),
+		detail: (() => {
+			const hooksDest = join(projectRoot, ".cursor", "hooks");
+			const exe = join(hooksDest, "cmhook.exe");
+			const marker = join(hooksDest, ".cmhook-json-ok");
+			if (!existsSync(exe)) return "missing — node thin client only";
+			if (existsSync(marker)) return "verified native client";
+			return "UNSAFE — run contextmind fix-hooks then install";
+		})(),
+	});
+
+	const listening = await isListening();
+	rows.push({
+		label: "tokenmind runtime",
+		status: listening ? "PASS" : "WARN",
+		detail: listening
+			? `http://${runtimeHost()}:${runtimePort()}/health`
+			: "not listening — run: contextmind start",
+	});
 
 	let worst = "PASS";
 	for (const row of rows) {
@@ -552,6 +1023,8 @@ function fetchHandle(projectRoot, handleId, args) {
 		t.record({
 			surface: "fetch",
 			toolName: "fetch",
+			// A CLI self-report: no hook payload reached here, so no host to derive.
+			host: "unknown",
 			handleId,
 			handleFetched: 1,
 			// Ledger rule (S8, G-S8-06): a fetch is a spend, not a saving.
@@ -712,7 +1185,7 @@ function stateCmd(projectRoot, positional) {
 
 function resolveProjectRoot(command, positional, flags) {
 	if (flags.dir) return resolve(flags.dir);
-	if (["install", "uninstall", "doctor", "status", "dashboard"].includes(command) && positional[1]) {
+	if (["install", "uninstall", "doctor", "status", "dashboard", "fix-hooks"].includes(command) && positional[1]) {
 		return resolve(positional[1]);
 	}
 	return resolve(process.cwd());
@@ -752,21 +1225,33 @@ const USAGE = `ContextMind CLI
   contextmind task validate [dir]     Validate .contextmind/task.active.json
   contextmind scorecard [--json]      Stack health scorecard
   contextmind state sync [dir]        Sync .agent/state from TaskBundle
+  contextmind fix-hooks [dir]       Emergency: node-only .cmd, disable bad cmhook.exe
+  contextmind mcp repair [dir]      Fix MCP node path + project-brain stdio (no library wipe)
+  contextmind start                   Start TokenMind Runtime (localhost)
+  contextmind stop                    Stop TokenMind Runtime`;
 
-No \`start\` / \`stop\`: there is no daemon in this slice.`;
-
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
 	const { positional, flags } = parseArgs(argv);
 	const command = positional[0] ?? "help";
 	const projectRoot = resolveProjectRoot(command, positional, flags);
 
 	switch (command) {
 		case "install":
-			return install(projectRoot, flags);
+			return await install(projectRoot, flags);
+		case "fix-hooks":
+			return fixHooks(projectRoot);
+		case "mcp":
+			if ((positional[1] ?? "repair") === "repair") return repairMcp(projectRoot, flags);
+			console.error("usage: contextmind mcp repair [dir]");
+			return 1;
 		case "uninstall":
 			return uninstall(projectRoot);
 		case "doctor":
-			return doctor(projectRoot);
+			return await doctor(projectRoot);
+		case "start":
+			return await cmdStart();
+		case "stop":
+			return await cmdStop();
 		case "status":
 			return status(projectRoot);
 		case "report":
@@ -817,7 +1302,7 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("cli.mjs")) {
-	process.exit(main());
+	main().then((code) => process.exit(code ?? 0));
 }
 
 export { DEFAULTS, ENGINE_ROOT, classify };

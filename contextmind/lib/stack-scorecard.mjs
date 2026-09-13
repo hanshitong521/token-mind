@@ -56,7 +56,8 @@ export function stackScorecard(telemetry, opts = {}) {
 
 	const orient_ok = notes.orient_ok ?? 0;
 	const orient_dup = notes.orient_dup ?? 0;
-	const orient_total = orient_ok + orient_dup;
+	const orient_cache_hit = notes.orient_cache_hit ?? 0;
+	const orient_total = orient_ok + orient_dup + orient_cache_hit;
 	const write_without_bundle = notes.write_without_bundle ?? 0;
 	const write_denied_no_bundle = notes.write_denied_no_bundle ?? 0;
 	const self_check_pass = notes.self_check_pass ?? 0;
@@ -66,7 +67,7 @@ export function stackScorecard(telemetry, opts = {}) {
 	const read_rule_denies = countPrefix("rule:");
 
 	const orient_hit_rate =
-		orient_total > 0 ? orient_ok / orient_total : null;
+		orient_total > 0 ? (orient_ok + orient_cache_hit) / orient_total : null;
 	const self_check_rate =
 		self_check_pass + self_check_fail > 0
 			? self_check_pass / (self_check_pass + self_check_fail)
@@ -92,6 +93,7 @@ export function stackScorecard(telemetry, opts = {}) {
 		raw_tokens: totals.raw_tokens ?? 0,
 		orient_ok,
 		orient_dup,
+		orient_cache_hit,
 		orient_hit_rate,
 		write_without_bundle,
 		write_denied_no_bundle,
@@ -118,7 +120,7 @@ export function formatScorecard(sc, { title = "Stack Scorecard", period = "All t
 		`Period: ${period}`,
 		`Health: ${sc.health}/100`,
 		"",
-		`orient_hit_rate   ${pct(sc.orient_hit_rate)}  (ok=${sc.orient_ok} dup=${sc.orient_dup})`,
+		`orient_hit_rate   ${pct(sc.orient_hit_rate)}  (ok=${sc.orient_ok} cache=${sc.orient_cache_hit ?? 0} dup=${sc.orient_dup})`,
 		`self_check_rate   ${pct(sc.self_check_rate)}  (pass=${sc.self_check_pass} fail=${sc.self_check_fail})`,
 		`read_blocked      ${sc.read_blocked}   overrides ${sc.read_override}`,
 		`write_wo_bundle   ${sc.write_without_bundle}   denied ${sc.write_denied_no_bundle}`,

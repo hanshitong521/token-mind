@@ -75,6 +75,7 @@ export function projectRootOf(input) {
 		input?.workspace_roots?.[0] ??
 		input?.cwd ??
 		process.env.CURSOR_PROJECT_DIR ??
+		process.env.CONTEXTMIND_PROJECT_ROOT ??
 		process.env.CLAUDE_PROJECT_DIR ??
 		process.cwd()
 	);
@@ -107,6 +108,9 @@ export function openRuntime(projectRoot) {
 		cacheEngine,
 		seen,
 		sessionId,
+		// Set once per connection by the MCP server from the initialize
+		// handshake; "" until then, so pre-handshake writes stay unknown.
+		mcpHost: "",
 		gate: (args) => {
 			const sid = args.sessionId ?? sessionId;
 			return runOutputGate({ cfg, handles, dedup, ...args, sessionId: sid });

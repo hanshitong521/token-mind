@@ -186,6 +186,8 @@ function handleFooter({ rawTokens, emittedTokens, method, handleId, contentType,
  * @param {string} [args.cmd]        Originating command, when there is one.
  * @param {string} [args.toolName]
  * @param {"shell"|"mcp"|"tool"} [args.surface]
+ * @param {number|null} [args.budgetTokens] Caller-supplied budget (an MCP tool
+ *   profile), used instead of the surface default for non-failure payloads.
  * @param {number|null} [args.exitCode]
  * @param {object} args.cfg
  * @param {import('./handles.mjs').HandleStore} args.handles
@@ -200,6 +202,7 @@ export function runOutputGate({
 	toolName,
 	surface = "shell",
 	exitCode = null,
+	budgetTokens = null,
 	cfg,
 	handles,
 	dedup = null,
@@ -215,7 +218,8 @@ export function runOutputGate({
 	const failure =
 		typeof exitCode === "number" && Number.isFinite(exitCode) ? exitCode !== 0 : cls.failure;
 	const contentType = cls.type;
-	const budget = budgetFor(cfg, { surface, failure });
+	const budget =
+		!failure && Number.isFinite(budgetTokens) ? budgetTokens : budgetFor(cfg, { surface, failure });
 
 	const finish = (text, extra = {}) => ({
 		text,

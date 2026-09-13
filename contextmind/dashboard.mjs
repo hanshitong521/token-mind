@@ -51,7 +51,31 @@ if (!existsSync(dbPath)) {
 	console.error("  Nothing has been governed for this project yet, or the project dir is wrong.");
 	process.exit(1);
 }
-const db = new DatabaseSync(dbPath, { readOnly: true });
+// No host list lives here: a new agent only has to write rows for this chart to
+// filter on it. The value is interpolated into a CREATE VIEW, so the shape test
+// below is also the injection guard — keep it strict.
+const HOST_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const probe = new DatabaseSync(dbPath, { readOnly: true });
+const HAS_HOST = probe
+	.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'host'")
+	.get() !== undefined;
+probe.close();
+
+function openLedger(host) {
+	const handle = new DatabaseSync(dbPath, { readOnly: true });
+	// A temp view shadows the real table, so every query below filters by host
+	// without a single one of them being rewritten.
+	if (host) {
+		// Legacy rows hold NULL; the ledger reports them under 'unknown'.
+		const pred =
+			host === "unknown" ? "COALESCE(host, 'unknown') = 'unknown'" : `host = '${host}'`;
+		handle.exec(`CREATE TEMP VIEW events AS SELECT * FROM main.events WHERE ${pred}`);
+	}
+	return handle;
+}
+
+let dbHost = "";
+let db = openLedger(dbHost);
 
 const TOKENIZER_ID = "heuristic:chars/4";
 
@@ -203,7 +227,18 @@ const PERIODS = {
 	year: { fmt: "%Y", label: "Yearly" },
 };
 
-function apiData() {
+function apiData(requested = "") {
+	// A pre-host ledger cannot answer a per-host question; serve it unfiltered.
+	const host = HAS_HOST && HOST_RE.test(requested) ? requested : "";
+	if (host !== dbHost) {
+		try {
+			db.close();
+		} catch {
+			/* a read-only handle that will not close is not worth a 500 */
+		}
+		db = openLedger(host);
+		dbHost = host;
+	}
 	const events = db
 		.prepare(`SELECT ${EVENT_FIELDS} FROM events ORDER BY ts DESC LIMIT 500`)
 		.all()
@@ -213,6 +248,8 @@ function apiData() {
 	return {
 		generated_at: new Date().toISOString(),
 		project: projectRoot,
+		host: host || null,
+		host_filter_dropped: Boolean(requested) && !host,
 		tokenizer: TOKENIZER_ID,
 		totals: totals(),
 		savings: savingsByChannel(),
@@ -243,9 +280,10 @@ const server = createServer((req, res) => {
 		res.end(HTML);
 		return;
 	}
-	if (req.url === "/api/data") {
+	if (req.url === "/api/data" || req.url?.startsWith("/api/data?")) {
 		try {
-			const data = apiData();
+			const wanted = new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("host") ?? "";
+			const data = apiData(wanted);
 			res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
 			res.end(JSON.stringify(data));
 		} catch (err) {

@@ -1,39 +1,36 @@
 /**
- * Shell Guard (spec 16) — transparent single-layer wrapping.
+ * Shell Guard — single-layer stdout wrap via context-compress (cc_balanced only).
  *
- * The model is not asked to "remember to compress". A preToolUse rewrite puts
- * the command through the locked first layer so stdout is governed before it
- * ever reaches the window.
- *
- * The wrap-target table and the safety heuristics are carried over from the
- * engine's own pretooluse hook (context-compress-main/src/hooks/pretooluse.ts)
- * rather than reinvented — it encodes several dead ends (watchers that hang a
- * buffered capture, `npm test` resolving to `vitest --watch`). It is duplicated
- * here instead of imported because that file is a standalone bundled script
- * written for Claude Code's tool names; the seam to watch is theirs moving, not
- * this list drifting on its own.
- *
- * RTK has no code path here at all. See lib/engine.mjs for why.
+ * AI-NOTE:
+ * - WHY: large install/build/docker dumps burn tokens; agent diagnostics must NOT wrap.
+ * - DO NOT: re-add `git` / `rg` / `npm test` / bare `make` to WRAP_TARGETS (hang doc P1).
+ *   Broken engine + wrap rewrite looks like "another layer failed".
+ * - DO NOT: enable RTK or a second compression layer (locked first_layer).
+ * - DO NOT: wrap when zod/CLI missing — isEngineCliReady() must stay fail-open skip.
+ * - AFTER CHANGE TEST:
+ *   1) `node --test` in token-mind/contextmind → shell guard suite (npm run build wraps;
+ *      npm test / rg / git status do not)
+ *   2) engine wrap: `node <ENGINE>/dist/cli/index.js wrap --mode balanced "echo ok"`
+ *   3) doctor: no FAIL; hang doc WRAP section still accurate
+ * Evidence: docs/agent-stack/AGENT-SESSION-HANG-2026-09-11.md
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ENGINE_ROOT } from "./config.mjs";
 
 export const WRAP_TARGETS = [
-	// hang doc P1: git porcelain never wrapped (agent diagnostic path)
-	/^(npm|yarn|pnpm|bun)\s+(install|i|add|test|run\s|update|outdated|audit|list|ls|view|info)/,
-	/^cargo\s+(build|test|check|run|clippy|tree|search|metadata)/,
+	// hang doc P1: git never wrapped. Agent diagnostics (rg/ls/ps/df, npm test) also skip —
+	// wrapping them masks engine failures as "another layer broke" and adds little token win.
+	/^(npm|yarn|pnpm|bun)\s+(install|i|add|run\s|update)\b/,
+	/^cargo\s+(build|test|check|run|clippy|tree|search|metadata)\b/,
 	/^(pytest|jest|mocha|vitest|tap|bats)\b/,
-	/^(find|grep|rg|fd|ag|ripgrep)\b/,
-	/^ls\s+(-R|-la|-al)/,
-	/^docker\s+(build|ps|logs|images|inspect|stats)/,
-	/^kubectl\s+(get|describe|logs|top|api-resources)/,
-	/^terraform\s+(plan|show|state\s+list|state\s+show|validate)/,
-	/^helm\s+(list|status|history|get)/,
-	/^(make|gradle|bazel|nx|turbo)\b/,
-	/^ps\s+(aux|-ef)/,
-	/^(df|du)\b/,
-	/^(go|rustc)\s+(test|build|vet|run)/,
+	/^docker\s+(build|ps|logs|images|inspect|stats)\b/,
+	/^kubectl\s+(get|describe|logs|top|api-resources)\b/,
+	/^terraform\s+(plan|show|state\s+list|state\s+show|validate)\b/,
+	/^helm\s+(list|status|history|get)\b/,
+	/^(make|gradle|bazel|nx|turbo)\s+(build|test|check|lint|compile)\b/,
+	/^(go|rustc)\s+(test|build|vet|run)\b/,
 	/^(mvn|mvnw|gradlew)\b/,
 ];
 
@@ -48,6 +45,22 @@ export function shellQuote(s) {
 
 export function engineCliCommand() {
 	return join(ENGINE_ROOT, "dist", "cli", "index.js");
+}
+
+/** Prefer stable Node for wrap child (avoid PATH nodejs_wheel drift). */
+export function wrapNodeBin() {
+	const envNode = process.env.CONTEXTMIND_NODE;
+	if (envNode && existsSync(envNode)) return envNode;
+	if (existsSync("D:\\nodejs\\node.exe")) return "D:\\nodejs\\node.exe";
+	return process.execPath;
+}
+
+/** Fail-open: missing CLI or zod → skip wrap (hang doc: broken engine must not rewrite). */
+export function isEngineCliReady() {
+	const cli = engineCliCommand();
+	if (!cli || !existsSync(cli)) return false;
+	// dist/config.js imports zod; incomplete node_modules → wrap crashes after rewrite
+	return existsSync(join(ENGINE_ROOT, "node_modules", "zod", "package.json"));
 }
 
 /**
@@ -91,8 +104,12 @@ export function evaluateShell(command, { cfg, mode } = {}) {
 		return { action: "skip", reason: "not a wrap target" };
 	}
 
+	if (!isEngineCliReady()) {
+		return { action: "skip", reason: "engine unavailable (missing cli or zod) — fail-open no wrap" };
+	}
+
 	const cli = engineCliCommand();
-	const tokens = [process.execPath, cli, "wrap", "--mode", mode ?? cfg.engine.mode, trimmed];
+	const tokens = [wrapNodeBin(), cli, "wrap", "--mode", mode ?? cfg.engine.mode, trimmed];
 	return {
 		action: "wrap",
 		command: tokens.map(shellQuote).join(" "),

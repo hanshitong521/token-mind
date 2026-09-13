@@ -35,8 +35,8 @@ export function normalizeAdapterQuery(query) {
 	return normalizeOrientQuery(query);
 }
 
-export function adapterCacheKey(toolName, query) {
-	return shaKey("adapter", toolName, normalizeAdapterQuery(query));
+export function adapterCacheKey(toolName, query, graphFp = "") {
+	return shaKey("adapter", toolName, normalizeAdapterQuery(query), graphFp);
 }
 
 export function fetchCacheKey(handle, selector) {

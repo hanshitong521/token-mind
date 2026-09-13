@@ -39,7 +39,7 @@ export function resolveHooksDir(cmRoot = CONTEXTMIND_ROOT) {
 		join(resolve(cmRoot, "..", ".."), "cursor", "hooks"),
 	];
 	for (const d of tries) {
-		if (existsSync(join(d, "cm-lib.mjs"))) return resolve(d);
+		if (existsSync(join(d, "cm-rpc.mjs"))) return resolve(d);
 	}
 	return resolve(cmRoot, "..", "hooks");
 }
@@ -116,6 +116,7 @@ export const DEFAULTS = {
 		// config error, not a silent fallthrough to something else.
 		first_layer: "cc_balanced",
 		enabled: true,
+		wrap_git: false,
 	},
 
 	read_guard: {
@@ -167,8 +168,18 @@ export const DEFAULTS = {
 			probe_tools: true,
 			servers: ["codegraph"],
 			bin: "codegraph",
-			/** auto = node+callers+callees for simple symbols; explore for paths/globs; explore = always full explore */
+			/**
+			 * AI-NOTE: mode auto|sidecar = daemon pipe; cli = always spawn.
+			 * Unknown keys in .contextmind.json are REJECTED (whole project file ignored) —
+			 * add new keys here in DEFAULTS first or doctor FAIL config + fall back to ps1.
+			 * After change: doctor PASS config; codegraph line sidecar or bundled-direct.
+			 */
+			mode: "auto",
 			orient_mode: "auto",
+			orient_fast_calls: "auto",
+			orient_call_limit: 8,
+			bundled_node: "",
+			bundled_entry: "",
 		},
 		mysql: { enabled: true, servers: ["ads-mysql"] },
 		/** 真实 serena（Python LSP MCP）可选 adapter，默认关闭；开启且装了 serena 时 context_outline engine=serena 委托。 */
@@ -204,11 +215,6 @@ export const DEFAULTS = {
 		inject_route: true,
 		inject_manifest: true,
 	},
-	memory: {
-		episodic_enabled: true,
-		episodic_file: ".contextmind/memory/episodic.jsonl",
-		vector_backend: "episodic",
-	},
 	/** Project Brain — optional session-end memory (fixtures + JSONL). */
 	brain: {
 		project_id: "",
@@ -243,6 +249,20 @@ export const DEFAULTS = {
  */
 export const USER_SCOPE_ONLY_KEYS = ["handles", "telemetry", "cache"];
 
+/**
+ * Keys whose reader no longer exists. Kept out of the rejection path on purpose:
+ * a project file that still sets one would otherwise lose every *live* setting
+ * beside it, because an unknown key voids the whole file.
+ */
+export const DEPRECATED_KEYS = [
+	"memory",
+	"episodic_enabled",
+	"episodic_file",
+	"vector_backend",
+	"brainSync",
+	"brainSyncOnStop",
+];
+
 function isPlainObject(v) {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -272,6 +292,10 @@ export function validateConfig(raw, source) {
 			const dflt = defaults[k];
 			const p = path ? `${path}.${k}` : k;
 			if (dflt === undefined) {
+				if (DEPRECATED_KEYS.includes(k)) {
+					console.warn(`[contextmind] Config: ${p} is deprecated and ignored (${source})`);
+					continue;
+				}
 				problems.push(`${p}: unknown key`);
 				continue;
 			}

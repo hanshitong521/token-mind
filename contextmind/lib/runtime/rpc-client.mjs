@@ -1,5 +1,13 @@
 /**
  * Thin hook → TokenMind Runtime HTTP. Retry once, then minimal mode (never hang).
+ *
+ * AI-NOTE:
+ * - Always stamp cwd/workspace_roots from CURSOR_PROJECT_DIR / CONTEXTMIND_PROJECT_ROOT
+ *   before POST (same idea as cmhook EnrichInputJson). Daemon process.cwd() is often
+ *   shejiuPro; omitting root makes TaskBundle allow_globs deny temp/test paths.
+ * - AFTER CHANGE: hooks.test.mjs read guard (Tiny.java allow, Mapper.xml statement deny);
+ *   live agent Read of temp files must not say "path outside allow_globs" unless truly out of task.
+ * - invokeHookRpc: canFastAllowHookInput → {} without HTTP (S3 lite path).
  */
 import {
 	DEFAULT_HOST,
@@ -10,20 +18,58 @@ import {
 	RPC_RETRY_TIMEOUT_MS,
 	RPC_TIMEOUT_MS,
 } from "./constants.mjs";
-import { runtimeHost, runtimePort, startDaemon } from "./lifecycle.mjs";
+import { resolveRuntimePort, runtimeHost, startDaemon } from "./lifecycle.mjs";
+import { canFastAllowHookInput } from "./fast-allow-pre.mjs";
 
 function hostPort() {
-	return { host: runtimeHost(), port: runtimePort() };
+	return { host: runtimeHost(), port: resolveRuntimePort() };
+}
+
+/** Mirror cmhook EnrichInputJson — daemon must not inherit wrong project root. */
+export function enrichHookProjectRoot(input) {
+	const envRoot =
+		process.env.CURSOR_PROJECT_DIR?.trim() ||
+		process.env.CONTEXTMIND_PROJECT_ROOT?.trim() ||
+		process.env.CLAUDE_PROJECT_DIR?.trim() ||
+		"";
+	const out = input && typeof input === "object" ? { ...input } : {};
+	if (!envRoot) return out;
+	if (!out.cwd) out.cwd = envRoot;
+	if (!Array.isArray(out.workspace_roots) || out.workspace_roots.length === 0) {
+		out.workspace_roots = [envRoot];
+	}
+	return out;
+}
+
+/** Live request controllers, so the hook can cancel them before it exits. */
+const inFlight = new Set();
+
+/**
+ * Cancel every request still in flight. The hook's guard timer can fire mid-request; exiting
+ * with a socket mid-close aborts the process on Windows
+ * ("Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)"), which turns a good decision
+ * into a failed hook. Aborting first lets undici tear the socket down.
+ */
+export function abortInFlight() {
+	for (const ac of inFlight) {
+		try {
+			ac.abort();
+		} catch {
+			/* already gone */
+		}
+	}
+	inFlight.clear();
 }
 
 async function postHook(body, timeoutMs) {
 	const { host, port } = hostPort();
 	const ac = new AbortController();
+	inFlight.add(ac);
 	const t = setTimeout(() => ac.abort(), timeoutMs);
 	try {
 		const res = await fetch(`http://${host}:${port}${HOOK_PATH}`, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", connection: "close" },
 			body: JSON.stringify(body),
 			signal: ac.signal,
 		});
@@ -33,6 +79,8 @@ async function postHook(body, timeoutMs) {
 	} catch (err) {
 		clearTimeout(t);
 		throw err;
+	} finally {
+		inFlight.delete(ac);
 	}
 }
 
@@ -64,7 +112,11 @@ function logMinimal(phase, err) {
  * @param {object} input Cursor hook stdin JSON
  */
 export async function invokeHookRpc(phase, input) {
-	const body = { phase, input, client: "cursor-thin", v: 1 };
+	const enriched = enrichHookProjectRoot(input);
+	if (phase === "pre" && canFastAllowHookInput(enriched)) {
+		return {};
+	}
+	const body = { phase, input: enriched, client: "cursor-thin", v: 1 };
 	try {
 		return sanitizeRpc(await postHook(body, RPC_TIMEOUT_MS));
 	} catch (first) {
@@ -73,7 +125,7 @@ export async function invokeHookRpc(phase, input) {
 			return sanitizeRpc(await postHook(body, RPC_RETRY_TIMEOUT_MS));
 		} catch (second) {
 			logMinimal(phase, second);
-			const fallback = phase === "pre" ? minimalPre(input) : minimalPost();
+			const fallback = phase === "pre" ? minimalPre(enriched) : minimalPost();
 			return sanitizeRpc(fallback);
 		}
 	}
@@ -90,7 +142,10 @@ export async function ensureRuntimeUp() {
 	try {
 		const ac = new AbortController();
 		const t = setTimeout(() => ac.abort(), 300);
-		const res = await fetch(`http://${host}:${port}${HEALTH_PATH}`, { signal: ac.signal });
+		const res = await fetch(`http://${host}:${port}${HEALTH_PATH}`, {
+			signal: ac.signal,
+			headers: { connection: "close" },
+		});
 		clearTimeout(t);
 		const body = await res.json().catch(() => ({}));
 		if (res.ok && body.ok !== false) return { ok: true };

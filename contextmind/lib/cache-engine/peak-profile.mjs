@@ -16,7 +16,6 @@ export const PEAK_CACHE_ENGINE = {
 	stablePrefixTrimRules: true,
 	compression: true,
 	orientSkipTokensEstimate: 364,
-	brainSyncOnStop: true,
 	toolCachePreDeny: true,
 	kvIntegration: true,
 	redisPromptMirror: true,

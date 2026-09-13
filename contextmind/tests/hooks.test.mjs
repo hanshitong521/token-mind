@@ -12,7 +12,7 @@
  *   - malformed input and a missing library both fail open
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -22,14 +22,34 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const HOOKS = resolve(HERE, "..", "..", "cursor", "hooks");
+const PROJ_ROOT = resolve(HERE, "..", "..", "..");
+const CLI = join(PROJ_ROOT, ".cursor", "contextmind", "cli.mjs");
+const HOOKS =
+	[resolve(HERE, "..", "..", "hooks"), resolve(HERE, "..", "..", "cursor", "hooks")].find((p) =>
+		existsSync(join(p, "cm-pre-tool.mjs")),
+	) ?? resolve(HERE, "..", "..", "cursor", "hooks");
 
 let workDir;
 
 before(() => {
+	// These are Cursor-contract tests, so pin the host: a Qoder marker in the ambient
+	// environment would make the hook emit Qoder's shape and every permission assertion
+	// below would read the wrong contract.
+	delete process.env.CONTEXTMIND_HOST;
+	delete process.env.QODER_PRODUCT_ID;
+	delete process.env.QODER_PROJECT_ROOT;
+	delete process.env.QODER_PROJECT_DIR;
 	workDir = mkdtempSync(join(tmpdir(), "cm-hook-"));
 	mkdirSync(join(workDir, ".cursor"), { recursive: true });
 	writeFileSync(join(workDir, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: {} }));
+	if (existsSync(CLI)) {
+		spawnSync(process.execPath, [CLI, "start", PROJ_ROOT], {
+			cwd: PROJ_ROOT,
+			encoding: "utf8",
+			timeout: 20_000,
+			windowsHide: true,
+		});
+	}
 });
 
 after(() => {
@@ -37,13 +57,19 @@ after(() => {
 });
 
 function runHook(name, payload, env = {}) {
+	const rooted = {
+		cwd: workDir,
+		workspace_roots: [workDir],
+		...payload,
+	};
 	const res = spawnSync(process.execPath, [join(HOOKS, name)], {
-		input: JSON.stringify(payload),
+		input: JSON.stringify(rooted),
 		env: {
 			...process.env,
 			CONTEXTMIND_TELEMETRY_DB: join(workDir, "t.db"),
 			CONTEXTMIND_PROJECT_ROOT: workDir,
 			CURSOR_PROJECT_DIR: workDir,
+			CONTEXTMIND_HOOK_EXIT_MS: "1200",
 			...env,
 		},
 		timeout: 60_000,
@@ -82,9 +108,16 @@ describe("hook contract", () => {
 		// A bad CONTEXTMIND_HOME must never turn into a blocked tool call. The
 		// upward walk is allowed to recover; what matters is that the worst case
 		// is "not governed", not "denied".
-		const r = runHook("cm-pre-tool.mjs", { tool_name: "Read", tool_input: { file_path: "x" } }, {
-			CONTEXTMIND_HOME: join(workDir, "does-not-exist"),
-		});
+		//
+		// The unique conversation_id is not decoration: recovery can land on a
+		// library whose Runtime is already serving another project, and an
+		// untagged session shares that daemon's dedup bucket — a path an earlier
+		// run read would deny here, on a machine that is merely busy.
+		const r = runHook(
+			"cm-pre-tool.mjs",
+			{ tool_name: "Read", tool_input: { file_path: "x" }, conversation_id: `failopen-${process.pid}-${Date.now()}` },
+			{ CONTEXTMIND_HOME: join(workDir, "does-not-exist") },
+		);
 		assert.equal(r.status, 0);
 		assert.equal(r.parseError, null, r.stdout);
 		assert.notEqual(r.json.permission, "deny");
@@ -92,6 +125,10 @@ describe("hook contract", () => {
 });
 
 describe("read guard", () => {
+	// Read may be off Cursor matcher (hang P0) but cm-pre-tool still governs when invoked
+	// (RPC / tests). Payloads must carry cwd=workDir so Runtime TaskBundle is the temp project,
+	// not a live shejiuPro allow_globs list (see enrichHookProjectRoot).
+
 	it("denies an unbounded read of a large Java service and names the next step", () => {
 		const path = join(workDir, "BigServiceImpl.java");
 		writeFileSync(path, `${"    public void doSomethingImportant(int id) { /* body */ }\n".repeat(400)}`);
@@ -153,12 +190,41 @@ describe("shell guard", () => {
 	it("rewrites an eligible command through the locked first layer", () => {
 		const r = runHook("cm-pre-tool.mjs", {
 			tool_name: "Shell",
-			tool_input: { command: "git status" },
+			tool_input: { command: "npm run build" },
 			conversation_id: "s1",
 		});
 		assert.equal(r.json.permission, "allow");
 		assert.match(r.json.updated_input.command, /context-compress[^\n]*wrap/);
 		assert.match(r.json.additional_context, /contextmind/i);
+	});
+
+	it("does not wrap npm test (agent diagnostic / watch hazard)", () => {
+		const r = runHook("cm-pre-tool.mjs", {
+			tool_name: "Shell",
+			tool_input: { command: "npm test" },
+			conversation_id: "s1",
+		});
+		assert.equal(r.json.permission, "allow");
+		assert.equal(r.json.updated_input, undefined);
+	});
+
+	it("does not wrap rg (agent diagnostic path)", () => {
+		const r = runHook("cm-pre-tool.mjs", {
+			tool_name: "Shell",
+			tool_input: { command: "rg WRAP_TARGETS lib" },
+			conversation_id: "s1",
+		});
+		assert.equal(r.json.updated_input, undefined);
+	});
+
+	it("does not rewrite git status when wrap_git is false (agent diagnostic path)", () => {
+		const r = runHook("cm-pre-tool.mjs", {
+			tool_name: "Shell",
+			tool_input: { command: "git status -sb" },
+			conversation_id: "s1",
+		});
+		assert.notEqual(r.json.permission, "deny");
+		assert.equal(r.json.updated_input, undefined);
 	});
 
 	it("does not rewrite a piped command", () => {
@@ -173,7 +239,7 @@ describe("shell guard", () => {
 	it("does not double-wrap an already wrapped command", () => {
 		const once = runHook("cm-pre-tool.mjs", {
 			tool_name: "Shell",
-			tool_input: { command: "git status" },
+			tool_input: { command: "npm run build" },
 			conversation_id: "s1",
 		});
 		const twice = runHook("cm-pre-tool.mjs", {
@@ -216,14 +282,14 @@ describe("mcp output guard", () => {
 		const r = runHook("cm-post-tool.mjs", {
 			tool_name: "mysql_query",
 			tool_output: JSON.stringify([{ type: "text", text: bigRows }]),
-			conversation_id: "s1",
+			conversation_id: `s-mcp-${Date.now()}`,
 		});
 		assert.equal(r.status, 0);
 		const out = r.json.updated_mcp_tool_output;
 		assert.ok(out, "expected updated_mcp_tool_output");
 		const text = Array.isArray(out) ? out[0].text : out;
 		assert.ok(text.length < bigRows.length, `expected shorter output, got ${text.length} vs ${bigRows.length}`);
-		assert.match(text, /handle=h_/);
+		assert.match(text, /handle[:=]\s*h_/);
 	});
 
 	it("leaves an in-budget MCP payload alone", () => {
@@ -242,6 +308,87 @@ describe("mcp output guard", () => {
 			conversation_id: "s1",
 		});
 		assert.equal(r.json.updated_mcp_tool_output, undefined);
+	});
+});
+
+describe("dual host envelope", () => {
+	it("pre-tool deny carries both Cursor permission and Qoder permissionDecision", () => {
+		const path = join(workDir, "BigServiceImpl.java");
+		writeFileSync(path, `${"    public void x() {}\n".repeat(400)}`);
+		const r = runHook("cm-pre-tool.mjs", {
+			tool_name: "Read",
+			tool_input: { file_path: path },
+			conversation_id: "s1",
+		});
+		assert.equal(r.json.permission, "deny");
+		assert.equal(r.json.hookSpecificOutput?.permissionDecision, "deny");
+		assert.ok(r.json.hookSpecificOutput?.permissionDecisionReason);
+	});
+});
+
+describe("qoder post-tool output contract", () => {
+	// Qoder reads a replacement only from `hookSpecificOutput.updatedToolOutput` (the flat Cursor
+	// key `updated_mcp_tool_output` appears nowhere in its SDK bundle). `updatedMCPToolOutput` is
+	// consulted only when the tool object is an MCP instance, which Qoder's meta-tool `mcp_call`
+	// is not — so both keys are emitted with the same value. Verified against the SDK bundle:
+	// hookSpecificOutput schema (zod) + getUpdatedToolOutput/getUpdatedMCPToolOutput + g instanceof.
+	const bigRows = JSON.stringify(
+		Array.from({ length: 400 }, (_, i) => ({ id: i, name: `product-${i}`, payload: `x`.repeat(120) })),
+	);
+
+	it("nests the governed output under hookSpecificOutput instead of the flat Cursor key", () => {
+		const r = runHook(
+			"cm-post-tool.mjs",
+			{
+				tool_name: "mcp_call",
+				tool_input: { toolName: "mcp__project_brain__search_project_context" },
+				tool_response: [{ type: "text", text: bigRows }],
+				conversation_id: `s-qoder-${Date.now()}`,
+			},
+			{ CONTEXTMIND_HOST: "qoder" },
+		);
+		assert.equal(r.status, 0);
+		const hso = r.json.hookSpecificOutput;
+		assert.equal(hso?.hookEventName, "PostToolUse");
+		assert.ok(hso.updatedToolOutput, "expected updatedToolOutput");
+		assert.ok(hso.updatedMCPToolOutput, "expected updatedMCPToolOutput");
+		assert.ok(r.json.updated_mcp_tool_output, "dual envelope keeps the Cursor flat key too");
+	});
+
+	it("unwraps the meta-tool so codegraph explore is not clipped on Qoder", () => {
+		const r = runHook(
+			"cm-post-tool.mjs",
+			{
+				tool_name: "mcp_call",
+				tool_input: { toolName: "mcp__codegraph__codegraph_explore" },
+				tool_response: [{ type: "text", text: bigRows }],
+				conversation_id: `s-qoder-cg-${Date.now()}`,
+			},
+			{ CONTEXTMIND_HOST: "qoder" },
+		);
+		// Without unwrapping, tool_name "mcp_call" is governed and the source gets clipped.
+		assert.equal(r.json.hookSpecificOutput, undefined);
+	});
+
+	it("packs a Brain answer against its profile size, not the wider surface default", () => {
+		// Real search_project_context answers land between the profile size (450)
+		// and budget.mcp_default (1200). Sizing them against the surface default
+		// meant the profile's number never applied and they arrived untouched.
+		const midRows = JSON.stringify(
+			Array.from({ length: 12 }, (_, i) => ({ id: `m${i}`, title: `memory-${i}`, body: `y`.repeat(180) })),
+		);
+		const r = runHook(
+			"cm-post-tool.mjs",
+			{
+				tool_name: "mcp_call",
+				tool_input: { toolName: "mcp__project_brain__search_project_context" },
+				tool_response: [{ type: "text", text: midRows }],
+				conversation_id: `s-qoder-budget-${Date.now()}`,
+			},
+			{ CONTEXTMIND_HOST: "qoder" },
+		);
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(r.json.hookSpecificOutput?.updatedToolOutput, `expected a profile-sized replacement: ${r.stdout.slice(0, 200)}`);
 	});
 });
 

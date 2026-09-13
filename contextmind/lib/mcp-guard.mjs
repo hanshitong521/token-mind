@@ -119,7 +119,17 @@ export function governMcpOutput({ toolOutput, toolName, cfg, runGate }) {
 	const rawTokens = countTokens(text);
 	if (rawTokens <= profile.max_tokens) return null;
 
-	const gated = runGate({ raw: text, toolName, surface: "mcp", cmd: null });
+	// The profile owns the size the gate packs against. Letting the gate fall back
+	// to budget.mcp_default silently widens the budget for every profile narrower
+	// than it — a payload between the two sizes is "over its profile" here and
+	// "already inside budget" in the gate, so it comes back untouched.
+	const gated = runGate({
+		raw: text,
+		toolName,
+		surface: "mcp",
+		cmd: null,
+		budgetTokens: profile.max_tokens,
+	});
 	if (!gated || gated.emittedTokens >= rawTokens) return null;
 
 	return {

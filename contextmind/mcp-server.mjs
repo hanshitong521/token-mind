@@ -14,6 +14,7 @@
  */
 
 import { SERVER_NAME, SERVER_VERSION, callTool, toolSpecs } from "./lib/mcp-tools.mjs";
+import { hostFromClientInfo } from "./lib/hosts.mjs";
 import { openRuntime } from "./lib/runtime.mjs";
 
 const projectRoot = process.env.CONTEXTMIND_PROJECT_DIR ?? process.cwd();
@@ -35,7 +36,11 @@ async function handleMessage(msg) {
 	if (method.startsWith("notifications/")) return;
 
 	switch (method) {
-		case "initialize":
+		case "initialize": {
+			// Each host spawns its own MCP server process, so one handshake per
+			// process is the whole story: stamp it before any tools/call lands.
+			const caller = hostFromClientInfo(params?.clientInfo?.name);
+			if (caller) rt.mcpHost = caller;
 			send({
 				jsonrpc: "2.0",
 				id,
@@ -48,6 +53,7 @@ async function handleMessage(msg) {
 				},
 			});
 			return;
+		}
 		case "ping":
 			send({ jsonrpc: "2.0", id, result: {} });
 			return;

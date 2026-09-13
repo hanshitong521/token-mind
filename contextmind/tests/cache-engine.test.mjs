@@ -15,6 +15,7 @@ import { runStopCache } from "../lib/cache-stop.mjs";
 import { deltaFromSeen } from "../lib/context/delta-context.mjs";
 import { SessionSeen } from "../lib/session-seen.mjs";
 import { runPromptPipeline } from "../lib/prompt-pipeline.mjs";
+import { gitHead, buildDependencyFingerprint } from "../lib/cache-engine/dependency-fingerprint.mjs";
 
 let dir;
 
@@ -202,7 +203,6 @@ describe("cache-engine", () => {
 		assert.equal(p.kvIntegration, true);
 		assert.equal(p.redisPromptMirror, true);
 		assert.equal(p.toolCachePreDeny, true);
-		assert.equal(p.brainSyncOnStop, true);
 	});
 
 	it("prompt pipeline fail-open without db", async () => {
@@ -215,6 +215,19 @@ describe("cache-engine", () => {
 		});
 		assert.equal(out.ok, true);
 		assert.equal(out.exact_hit, false);
+	});
+
+	it("dependency fingerprint caches gitHead within TTL", () => {
+		const root = process.cwd();
+		const a = gitHead(root);
+		const t0 = performance.now();
+		for (let i = 0; i < 5; i++) gitHead(root);
+		const ms = performance.now() - t0;
+		const b = buildDependencyFingerprint(root);
+		const c = buildDependencyFingerprint(root);
+		assert.equal(a, gitHead(root));
+		assert.equal(b, c);
+		assert.ok(ms < 50, `cached gitHead should be fast, got ${ms}ms`);
 	});
 });
 

@@ -46,11 +46,21 @@ CREATE TABLE IF NOT EXISTS events (
   hook_latency_ms        REAL,
   gate_latency_ms        REAL,
   tokenizer              TEXT,
-  note                   TEXT
+  note                   TEXT,
+  /* Which IDE sent the hook (qoder / cursor / unknown). Derived from the
+     payload, never the writer's env — see hostOf() in runtime.mjs.
+     Last column so ALTER TABLE can add it in place on existing DBs. */
+  host                   TEXT,
+  /* Which agent inside that host: "main" for the top-level session, a label for
+     a subagent, "unknown" for a writer that sees no payload (MCP server, CLI).
+     Derived from the payload like host — see detectAgent() in hosts.mjs. */
+  agent                  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_surface ON events(surface);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_host ON events(host);
+CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent);
 `;
 
 /** Default DB location, mirroring where the engine keeps its own state. */
@@ -70,6 +80,20 @@ export class Telemetry {
 			mkdirSync(dirname(dbPath), { recursive: true });
 			this.db = new DatabaseSync(dbPath);
 			this.db.exec("PRAGMA journal_mode = WAL");
+			// Several agents/hosts write this ledger from separate short-lived hook
+			// processes; without a timeout a concurrent writer gets SQLITE_BUSY
+			// immediately and the caller's catch{} drops the row silently.
+			this.db.exec("PRAGMA busy_timeout = 5000");
+			// Migration for DBs written before `host`/`agent` existed: add the column in
+			// place so their ledger survives. Runs BEFORE SCHEMA because SCHEMA's
+			// idx_events_host cannot be built on a table lacking the column, and it
+			// skips a fresh file (empty table_info) where SCHEMA creates the table.
+			const cols = this.db.prepare("PRAGMA table_info(events)").all();
+			for (const col of ["host", "agent"]) {
+				if (cols.length && !cols.some((c) => c.name === col)) {
+					this.db.exec(`ALTER TABLE events ADD COLUMN ${col} TEXT`);
+				}
+			}
 			this.db.exec(SCHEMA);
 			this.insert = this.db.prepare(`
 				INSERT INTO events (
@@ -77,9 +101,9 @@ export class Telemetry {
 					raw_tokens, emitted_tokens, prevented_read_tokens, tool_emitted_savings,
 					proxy_llm_savings, handle_id, handle_created, handle_fetched, dedup_hit,
 					read_blocked, read_override, first_layer, adapter_used, adapter_missing,
-					hook_latency_ms, gate_latency_ms, tokenizer, note
+					hook_latency_ms, gate_latency_ms, tokenizer, note, host, agent
 				) VALUES (
-					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+					?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 				)
 			`);
 		} catch (err) {
@@ -141,6 +165,10 @@ export class Telemetry {
 			ev.gateLatencyMs ?? null,
 			ev.tokenizer ?? TOKENIZER_ID,
 			ev.note ?? null,
+			// Call sites with no payload (CLI self-report, MCP server tools) send no
+			// host; NULL would land in the dashboard as an anonymous bucket.
+			ev.host ?? "unknown",
+			ev.agent ?? "unknown",
 		];
 		try {
 			this.insert.run(...row);
@@ -154,7 +182,7 @@ export class Telemetry {
 	/**
 	 * Aggregate the ledger plus counters, over every dimension the S8 report
 	 * needs (spec 24 / S8 freeze): total, session, task, tool, adapter,
-	 * content_type and success/failure. `since` is an ISO timestamp.
+	 * content_type, host and success/failure. `since` is an ISO timestamp.
 	 *
 	 * The headline numbers are derived ONCE here (ledger) so the text and the
 	 * JSON report cannot disagree (G-S8-09).
@@ -229,6 +257,8 @@ export class Telemetry {
 			totals,
 			ledger,
 			bySurface: groupBy("surface"),
+			byHost: groupBy("host"),
+			byAgent: groupBy("agent"),
 			byTool: groupBy("tool_name"),
 			bySession: groupBy("session_id"),
 			byTask: groupBy("task_id"),

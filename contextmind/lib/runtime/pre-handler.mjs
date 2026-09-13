@@ -17,7 +17,9 @@ import {
 import { loadWaiver } from "../stack-router.mjs";
 import { evaluatePathScope, loadTaskBundle, taskIdFromLoaded, appendExecutionRecord } from "../task-bundle.mjs";
 import { isResidentRule, getTrapForPath, trapMessage } from "../traps.mjs";
+import { detectAgent, detectHost } from "../hosts.mjs";
 import { projectRootOf, sessionIdOf } from "../runtime.mjs";
+import { canFastAllowPre } from "./fast-allow-pre.mjs";
 
 class Decision {
 	constructor(payload) {
@@ -41,6 +43,31 @@ function argsOf(input) {
 	return input.tool_input ?? input.arguments ?? {};
 }
 
+/**
+ * Every spelling of "the host is calling an MCP tool".
+ *
+ * Cursor invokes MCP tools directly (`CallMcpTool`, matched as `MCP:<name>`). Qoder routes
+ * them through the meta-tools `mcp_call` / `mcp_get` / `mcp_list` and puts the real target
+ * in `tool_input.toolName` as `mcp__<server>__<tool>`. Without this the MCP branches below
+ * never fire on Qoder — the raw-codegraph block included.
+ */
+const MCP_CALL_TOOLS = new Set(["callmcptool", "mcp_call", "mcp_get", "mcp_list"]);
+
+/** `mcp__context_compress__stats` -> { server: "context_compress", tool: "stats" } */
+function normalizeInnerMcp(raw, args) {
+	const text = String(raw ?? "");
+	let server = String(args?.server ?? args?.mcp_server ?? "").toLowerCase();
+	let tool = text.toLowerCase();
+	if (text.startsWith("mcp__")) {
+		const parts = text.split("__");
+		if (parts.length >= 3) {
+			server = server || parts[1].toLowerCase();
+			tool = parts.slice(2).join("__").toLowerCase();
+		}
+	}
+	return { server, tool };
+}
+
 function normPath(p) {
 	return String(p ?? "").replace(/\\/g, "/");
 }
@@ -49,15 +76,6 @@ function isRepoRootPath(p) {
 	const n = normPath(p).replace(/\/$/, "");
 	if (!n) return true;
 	return /\/shejiupro$/i.test(n) || /^[a-z]:\/worka\/shejiupro$/i.test(n);
-}
-
-/** Skip SQLite + guards when the tool cannot affect token/risk surfaces. */
-function canFastAllowPre(name, args) {
-	if (name === "write" || name.includes("write") || name.includes("strreplace")) {
-		const p = normPath(String(args.path ?? args.file_path ?? args.target ?? ""));
-		if (!/\.java$/i.test(p)) return true;
-	}
-	return false;
 }
 
 export async function handlePreTool(input, { openRuntime }) {
@@ -85,17 +103,26 @@ async function runPre(input, openRuntimeFn) {
 	const taskLoaded = loadTaskBundle(projectRoot, cfg);
 	const taskBundleDoc = taskLoaded?.bundle ?? null;
 	const activeTaskId = taskIdFromLoaded(taskLoaded);
+	// Derived once per hook call: this is the synchronous hot path and the
+	// wrapper below runs for every pre-tool row.
+	const preHost = detectHost(input);
+	const preAgent = detectAgent(input);
 
 	const record = (ev) => {
 		try {
-			rt.telemetry.record({ taskId: activeTaskId, ...ev });
+			// host and agent derive from `input`; an explicit ev.host / ev.agent
+			// (a caller that knows better) still wins.
+			rt.telemetry.record({ taskId: activeTaskId, host: preHost, agent: preAgent, ...ev });
 		} catch {
 			/* telemetry is never load-bearing */
 		}
 	};
 
-	const innerMcp = String(args.toolName ?? args.tool_name ?? "").toLowerCase();
-	const innerServer = String(args.server ?? args.mcp_server ?? "").toLowerCase();
+	const isMcpCall = MCP_CALL_TOOLS.has(name);
+	const { server: innerServer, tool: innerMcp } = normalizeInnerMcp(
+		args.toolName ?? args.tool_name,
+		args,
+	);
 	const command = String(args.command ?? input.command ?? "");
 	const unbounded = args.offset == null && args.limit == null;
 	const value = toolValueScore({
@@ -106,7 +133,7 @@ async function runPre(input, openRuntimeFn) {
 	input._tokenmind = { value, must: mustGovern(name, { command, server: innerServer }) };
 
 	if (
-		(name === "callmcptool" && (innerMcp.includes("codegraph") || innerServer.includes("codegraph"))) ||
+		(isMcpCall && (innerMcp.includes("codegraph") || innerServer.includes("codegraph"))) ||
 		(name.includes("codegraph") && !name.includes("context_"))
 	) {
 		record({
@@ -124,10 +151,9 @@ async function runPre(input, openRuntimeFn) {
 	}
 
 	{
-		const isFetch =
-			(name === "callmcptool" && innerMcp.includes("context_fetch")) || name.includes("context_fetch");
+		const isFetch = (isMcpCall && innerMcp.includes("context_fetch")) || name.includes("context_fetch");
 		if (isFetch) {
-			const innerArgs = name === "callmcptool" ? (args.arguments ?? args.tool_input ?? {}) : args;
+			const innerArgs = isMcpCall ? (args.arguments ?? args.tool_input ?? {}) : args;
 			if (innerArgs?.full === true && cfg.fetch?.allow_full !== true) {
 				record({
 					surface: "mcp",
@@ -145,7 +171,7 @@ async function runPre(input, openRuntimeFn) {
 		}
 	}
 
-	if (name === "callmcptool" && innerMcp.includes("context_")) {
+	if (isMcpCall && innerMcp.includes("context_") && !innerMcp.includes("context_orient")) {
 		const innerArgs = args.arguments ?? args.tool_input ?? {};
 		try {
 			tryDenyL2ToolCache({
@@ -167,10 +193,9 @@ async function runPre(input, openRuntimeFn) {
 	}
 
 	{
-		const isOrient =
-			(name === "callmcptool" && innerMcp.includes("context_orient")) || name.includes("context_orient");
+		const isOrient = (isMcpCall && innerMcp.includes("context_orient")) || name.includes("context_orient");
 		if (isOrient) {
-			const innerArgs = name === "callmcptool" ? (args.arguments ?? args.tool_input ?? {}) : args;
+			const innerArgs = isMcpCall ? (args.arguments ?? args.tool_input ?? {}) : args;
 			const rawQ = String(innerArgs.query ?? innerArgs.symbol ?? "").slice(0, 200);
 			const refresh = innerArgs.refresh === true;
 			let okey = "";
@@ -203,6 +228,7 @@ async function runPre(input, openRuntimeFn) {
 				success: true,
 				note: "orient_ok",
 			});
+			return {};
 		}
 	}
 

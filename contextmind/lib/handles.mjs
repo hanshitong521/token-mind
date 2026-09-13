@@ -69,6 +69,7 @@ export class HandleStore {
 			mkdirSync(dirname(dbPath), { recursive: true });
 			this.db = new DatabaseSync(dbPath);
 			this.db.exec("PRAGMA journal_mode = WAL");
+			this.db.exec("PRAGMA busy_timeout = 5000");
 			this.db.exec(SCHEMA);
 		} catch (err) {
 			this.failed = err instanceof Error ? err.message : String(err);

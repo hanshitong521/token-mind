@@ -1,0 +1,123 @@
+/**
+ * Repair MCP mount entries across agent hosts — idempotent, no library wipe.
+ *
+ * Fixes two recurring drift modes:
+ * 1. contextmind registered with Python nodejs_wheel (install used process.execPath)
+ * 2. project-brain on Cursor using HTTP url transport instead of venv stdio
+ */
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+import { loadConfig } from "./config.mjs";
+import { mcpConfigFile, supports } from "./hosts.mjs";
+import { shejiuDataRoot } from "./shejiu-data-root.mjs";
+import { wrapNodeBin } from "./shell-guard.mjs";
+
+export function brainStdioEntry(projectRoot, cfg) {
+	const py = cfg?.brain?.python ? resolve(String(cfg.brain.python)) : null;
+	if (!py || !existsSync(py)) return null;
+	const brainRoot = resolve(dirname(py), "..", "..");
+	const projectId = String(cfg?.brain?.project_id ?? "shejiuPro").trim();
+	return {
+		type: "stdio",
+		command: py,
+		args: ["-u", "-m", "brain_mcp.server"],
+		cwd: brainRoot,
+		env: {
+			PYTHONPATH: join(brainRoot, "src"),
+			PYTHONUTF8: "1",
+			PYTHONUNBUFFERED: "1",
+			PYTHONIOENCODING: "utf-8",
+			BRAIN_DEFAULT_PROJECT_ID: projectId,
+			BRAIN_REPO_ROOT: resolve(projectRoot),
+			BRAIN_REPO_ROOT_SHEJIUPRO: resolve(projectRoot),
+			BRAIN_PROJECT_ALIASES: "shejiuTest=shejiuPro",
+			SHEJIU_DATA_ROOT: shejiuDataRoot(),
+		},
+	};
+}
+
+export function contextmindStdioEntry(projectRoot, serverPath, profile, projCfg, prevEntry) {
+	const env = {
+		CONTEXTMIND_PROJECT_DIR: resolve(projectRoot),
+		SHEJIU_DATA_ROOT: shejiuDataRoot(),
+	};
+	if (projCfg?.cache_engine?.kvUrl) env.CONTEXTMIND_KV_BRIDGE_URL = String(projCfg.cache_engine.kvUrl);
+	const prevEnv = prevEntry?.env;
+	if (prevEnv && typeof prevEnv === "object") {
+		for (const [k, v] of Object.entries(prevEnv)) {
+			if (v != null && env[k] === undefined) env[k] = v;
+		}
+	}
+	return {
+		type: "stdio",
+		command: wrapNodeBin(),
+		args: [serverPath],
+		env,
+		...(profile.mcp?.fields || {}),
+	};
+}
+
+function wheelNode(command) {
+	return /nodejs_wheel/i.test(String(command ?? ""));
+}
+
+export function repairMcpMounts({ projectRoot, serverPath, hosts, readJson, writeJson, backupOnce }) {
+	const projCfg = loadConfig(projectRoot);
+	const node = wrapNodeBin();
+	const results = [];
+
+	for (const profile of hosts.filter((h) => supports(h, "mcp"))) {
+		if (profile.verified !== true) {
+			results.push({ host: profile.id, skipped: profile.unverifiedReason || "unverified" });
+			continue;
+		}
+		const file = mcpConfigFile(profile.id, { projectRoot, home: process.env.CONTEXTMIND_INSTALL_HOME || process.env.USERPROFILE || process.env.HOME });
+		if (!file) {
+			results.push({ host: profile.id, skipped: "no mcp config path" });
+			continue;
+		}
+		const keyPath = profile.mcp.keyPath || "mcpServers";
+		const backup = backupOnce(file, ".contextmind-mcp-backup");
+		const doc = readJson(file, {}) ?? {};
+		if (!doc[keyPath] || typeof doc[keyPath] !== "object") doc[keyPath] = {};
+		const servers = doc[keyPath];
+		const changes = [];
+
+		const prevCtx = servers.contextmind;
+		const nextCtx = contextmindStdioEntry(projectRoot, serverPath, profile, projCfg, prevCtx);
+		if (!prevCtx || wheelNode(prevCtx.command) || prevCtx.command !== node) {
+			servers.contextmind = nextCtx;
+			changes.push(`contextmind → ${node}`);
+		}
+
+		// Cursor project scope: ensure project-brain is stdio (not HTTP url).
+		if (profile.id === "cursor" && profile.mcp?.scope === "project") {
+			const prevBrain = servers["project-brain"];
+			const needs = !prevBrain || prevBrain.url || wheelNode(prevBrain?.command);
+			if (needs) {
+				const brain = brainStdioEntry(projectRoot, projCfg);
+				if (brain) {
+					servers["project-brain"] = brain;
+					changes.push(prevBrain?.url ? "project-brain url→stdio" : "project-brain stdio");
+				} else {
+					changes.push("project-brain skipped (venv python missing)");
+				}
+			}
+		}
+
+		if (changes.length === 0) {
+			results.push({ host: profile.id, file, ok: true, detail: "already correct" });
+			continue;
+		}
+		writeJson(file, doc);
+		results.push({
+			host: profile.id,
+			file,
+			scope: profile.mcp.scope,
+			backup: existsSync(backup) ? backup : null,
+			changes,
+		});
+	}
+	return { node, results };
+}

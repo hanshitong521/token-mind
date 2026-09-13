@@ -1,21 +1,16 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { statePath } from "./shejiu-data-root.mjs";
 
 const ACTIVE = "task.active.json";
-
-function resolveUnderProject(projectRoot, p) {
-	const s = String(p ?? "").trim();
-	if (!s) return join(projectRoot, ".contextmind", ACTIVE);
-	return isAbsolute(s) ? resolve(s) : join(projectRoot, s);
-}
+const EXECUTION_LOG = "execution.jsonl";
 
 export function taskFilePath(projectRoot, cfg = {}) {
-	if (cfg?.sdlc?.task_file) return resolveUnderProject(projectRoot, cfg.sdlc.task_file);
-	return join(projectRoot, ".contextmind", ACTIVE);
+	return statePath(projectRoot, cfg?.sdlc?.task_file, cfg, ACTIVE);
 }
 
-export function executionLogPath(projectRoot, _cfg = {}) {
-	return join(projectRoot, ".contextmind", "execution.jsonl");
+export function executionLogPath(projectRoot, cfg = {}) {
+	return statePath(projectRoot, cfg?.sdlc?.execution_log, cfg, EXECUTION_LOG);
 }
 
 export function globMatch(filePath, pattern) {
@@ -88,7 +83,7 @@ export function evaluatePathScope({ filePath, projectRoot, bundle, enforceAllow 
 
 export function appendExecutionRecord(projectRoot, cfg, record) {
 	const path = executionLogPath(projectRoot, cfg);
-	mkdirSync(join(projectRoot, ".contextmind"), { recursive: true });
+	mkdirSync(dirname(path), { recursive: true });
 	appendFileSync(path, `${JSON.stringify({ ...record, ts: Date.now() })}\n`, "utf8");
 }
 

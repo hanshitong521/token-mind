@@ -1,31 +1,39 @@
 #!/usr/bin/env node
-/**
- * beforeSubmitPrompt — L0 exact lookup + session delta (Ultimate Cache Engine §22).
- * Fail-open: never blocks the agent.
- */
-import { ready, runtime, lib } from "./cm-lib.mjs";
+/** beforeSubmitPrompt — prompt cache pipeline. Thin path (no cm-lib graph). */
+import { emit, findHome, loadHomeModule, readHookInput } from "./cm-rpc.mjs";
 
-if (!ready) {
+const HOOK_MS = 8_000;
+const guard = setTimeout(() => {
 	process.stdout.write("{}\n");
 	process.exit(0);
-}
-
-const { emit, noop, openRuntime, projectRootOf, readHookInput, sessionIdOf } = runtime;
-
-const input = await readHookInput();
-const prompt = input.prompt ?? input.user_message ?? "";
-if (!String(prompt).trim()) {
-	noop();
-	process.exit(0);
-}
-
-const projectRoot = projectRootOf(input);
-const rt = openRuntime(projectRoot);
-const sessionId = sessionIdOf(input);
+}, HOOK_MS);
 
 try {
-	const { runPromptPipeline } = await lib("prompt-pipeline.mjs");
-	const out = await runPromptPipeline({
+	if (!findHome()) {
+		clearTimeout(guard);
+		process.stdout.write("{}\n");
+		process.exit(0);
+	}
+	const input = await readHookInput();
+	const prompt = input.prompt ?? input.user_message ?? "";
+	if (!String(prompt).trim()) {
+		clearTimeout(guard);
+		emit({});
+		process.exit(0);
+	}
+
+	const runtime = await loadHomeModule("runtime.mjs");
+	const pipeline = await loadHomeModule("prompt-pipeline.mjs");
+	if (!runtime?.openRuntime || !pipeline?.runPromptPipeline) {
+		clearTimeout(guard);
+		emit({});
+		process.exit(0);
+	}
+
+	const projectRoot = runtime.projectRootOf(input);
+	const rt = runtime.openRuntime(projectRoot);
+	const sessionId = runtime.sessionIdOf(input);
+	const out = await pipeline.runPromptPipeline({
 		projectRoot,
 		prompt,
 		sessionId,
@@ -37,11 +45,12 @@ try {
 			task_mode: input.task_mode ?? "",
 		},
 	});
-	if (out.additional_context) {
-		emit({ additional_context: out.additional_context });
-	} else {
-		noop();
-	}
+	clearTimeout(guard);
+	if (out?.additional_context) emit({ additional_context: out.additional_context });
+	else emit({});
+	process.exit(0);
 } catch {
-	noop();
+	clearTimeout(guard);
+	process.stdout.write("{}\n");
+	process.exit(0);
 }

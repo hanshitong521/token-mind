@@ -1,23 +1,25 @@
 /**
- * The seven MCP tools ContextMind exposes to the Agent (spec 9, decision 5C).
+ * ContextMind MCP tools (orient/find/get/…).
  *
- * Everything upstream is an internal adapter: CodeGraph through its local CLI
- * (probed at call time — a missing binary is a status, never a fake success),
- * the compression engine through the Output Gate, raw evidence through the
- * handle store. Tool descriptions are written to a budget: the whole
- * tools/list payload must measure <= budget.mcp_schema_total tokens
- (2500), so every word here costs context on every turn.
+ * AI-NOTE (orient path):
+ * - WHY: context_orient is the only approved Java-structure entry; raw codegraph_* blocked.
+ * - Order: sidecar (daemon pipe) → CLI bundled-direct → explore. Do not invert for "simplicity".
+ * - DO NOT: set adapters.codegraph.mode=cli in .contextmind.json unless debugging spawn.
+ * - AFTER CHANGE TEST: doctor codegraph=`sidecar`; orient same symbol twice (2nd cache/dup ok);
+ *   new symbol still returns body; if daemon dead, CLI fallback still works (no empty success).
  */
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { runCodegraphSync } from "./codegraph-spawn.mjs";
+import { runCodegraphAsync, runCodegraphSync } from "./codegraph-spawn.mjs";
+import { sidecarEnabled, sidecarOrient } from "./codegraph-sidecar.mjs";
 import { codegraphBin, commandAvailable } from "./bin-probe.mjs";
 import { countTokens, truncateToTokens } from "./tokens.mjs";
 import { codegraphSymbolArg, isSimpleOrientSymbol, normalizeOrientQuery, orientSeenKey } from "./orient-key.mjs";
 import { adapterCacheKey } from "./result-cache.mjs";
+import { codegraphGraphFp } from "./graph-fingerprint.mjs";
 import { filterNotable, scanSymbols, serializeOutline } from "./symbols.mjs";
 
 export { normalizeOrientQuery, orientSeenKey };
@@ -56,38 +58,67 @@ function orientMode(cfg) {
 	return "auto";
 }
 
-/** ~1–5s on large repos vs 60–120s for full explore; falls back when output is empty. */
-function runOrientFast(cfg, query) {
+function orientFastCallsMode(cfg) {
+	const m = String(cfg?.adapters?.codegraph?.orient_fast_calls ?? "auto").toLowerCase();
+	if (m === "none" || m === "node_only" || m === "false" || m === "0") return "node_only";
+	if (m === "full" || m === "true" || m === "1") return "full";
+	return "auto";
+}
+
+/** Sidecar first (mode=auto|sidecar); CLI bundled-direct fallback. See file AI-NOTE. */
+async function runOrientFast(cfg, query) {
 	const sym = codegraphSymbolArg(query);
 	if (!sym) return { ok: false, raw: "", sym: "" };
+	const callsMode = orientFastCallsMode(cfg);
+	const callLimit = cfg?.adapters?.codegraph?.orient_call_limit ?? 8;
+
+	if (sidecarEnabled(cfg)) {
+		try {
+			const side = await sidecarOrient(cfg, sym, { callsMode, callLimit });
+			if (side.ok) return side;
+		} catch {
+			/* fall through to CLI */
+		}
+	}
+
 	const chunks = [];
-	let worstExit = 0;
 	const nodeRes = runCodegraph(cfg, ["node", sym], { timeoutMs: 25_000 });
 	const nodeCode = nodeRes.status ?? 1;
 	const nodeOut = `${nodeRes.stdout ?? ""}${nodeRes.stderr ? `\n[stderr]\n${nodeRes.stderr}` : ""}`.trim();
 	chunks.push(`### codegraph node ${sym}\nexit_code=${nodeCode}\n${nodeOut}`);
 	let raw = chunks.join("\n\n");
-	let ok = nodeCode === 0 && nodeOut.length > 80;
-	if (ok) {
-		for (const [sub, subArgs] of [
-			["callers", [sym, "--limit", "12"]],
-			["callees", [sym, "--limit", "12"]],
-		]) {
-			const res = runCodegraph(cfg, [sub, ...subArgs], { timeoutMs: 20_000 });
-			const code = res.status ?? 1;
-			worstExit = Math.max(worstExit, code);
-			const out = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`.trim();
-			if (out) chunks.push(`### codegraph ${sub} ${sym}\nexit_code=${code}\n${out}`);
-		}
-		raw = chunks.join("\n\n");
+	const ok = nodeCode === 0 && nodeOut.length > 80;
+	if (!ok) return { ok, raw, sym };
+
+	const richNode = nodeOut.length >= 3_500;
+	if (callsMode === "node_only" || (callsMode === "auto" && richNode)) {
+		return { ok, raw, sym };
 	}
+
+	const limit = String(callLimit);
+	const [callersRes, calleesRes] = await Promise.all([
+		runCodegraphAsync(cfg, ["callers", sym, "--limit", limit], { timeoutMs: 18_000 }),
+		runCodegraphAsync(cfg, ["callees", sym, "--limit", limit], { timeoutMs: 18_000 }),
+	]);
+	for (const [label, res] of [
+		["callers", callersRes],
+		["callees", calleesRes],
+	]) {
+		const code = res.status ?? 1;
+		const out = `${res.stdout ?? ""}${res.stderr ? `\n[stderr]\n${res.stderr}` : ""}`.trim();
+		if (out) chunks.push(`### codegraph ${label} ${sym}\nexit_code=${code}\n${out}`);
+	}
+	raw = chunks.join("\n\n");
 	return { ok, raw, sym };
 }
 
 // ─── telemetry helper ───
 
 function record(rt, ev) {
-	rt.telemetry?.record({ surface: "mcp", ...ev });
+	// No hook payload reaches the MCP server; the host comes from the
+	// initialize handshake (mcp-server.mjs) instead of the daemon's env, which
+	// both hosts share. Unidentified callers stay in the unknown bucket.
+	rt.telemetry?.record({ surface: "mcp", host: rt.mcpHost || "unknown", ...ev });
 }
 
 // ─── status semantics (spec 6 red line 3: an empty answer states why) ───
@@ -237,7 +268,11 @@ async function toolOrient(args, rt) {
 	const refresh = args?.refresh === true;
 	const okey = orientSeenKey(query);
 	const sessionId = rt.sessionId ?? "mcp-server";
-	const cacheKey = adapterCacheKey("context_orient", query);
+	const cacheKey = adapterCacheKey(
+		"context_orient",
+		query,
+		codegraphGraphFp(cfg.project_root ?? process.cwd()),
+	);
 
 	// 1) Same MCP process — ORIENT_DUP stub (cheapest).
 	if (okey && !refresh) {
@@ -310,7 +345,7 @@ async function toolOrient(args, rt) {
 	let raw = "";
 	if (tryFast) {
 		const tFast = performance.now();
-		const fast = runOrientFast(cfg, query);
+		const fast = await runOrientFast(cfg, query);
 		exploreMs = Math.round(performance.now() - tFast);
 		if (fast.ok) {
 			orientPath = "fast";

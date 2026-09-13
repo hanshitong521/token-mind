@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "_comment": "Host registry — single source of truth for every agent this layer governs. Adding a host should be a data change here, not an edit to install-plan/cli/runtime/telemetry. `verified` means someone checked these paths and shapes against a real install of that host; unverified profiles are advertised by doctor and refused by install, because a guessed config path silently writes governance nowhere.",
+  "hosts": [
+    {
+      "id": "cursor",
+      "label": "Cursor",
+      "verified": true,
+      "capabilities": {
+        "hooks": true,
+        "mcp": true,
+        "failClosed": true,
+        "outputRewrite": true
+      },
+      "detect": {
+        "transcriptPaths": ["\\.cursor"],
+        "configDirs": ["\\.cursor"],
+        "eventCase": "lower",
+        "toolPayloadKey": "tool_output",
+        "mcpToolPrefix": "MCP:"
+      },
+      "mcpClientInfo": ["cursor"],
+      "hooks": {
+        "file": {
+          "scope": "project",
+          "path": ".cursor/hooks.json",
+          "keyPath": "hooks",
+          "entryShape": "flat",
+          "rootFields": { "version": 1 }
+        },
+        "eventNames": "identity",
+        "asyncEvents": [],
+        "matcherEvents": null,
+        "toolMatcher": null,
+        "env": {}
+      },
+      "mcp": {
+        "scope": "project",
+        "path": ".cursor/mcp.json",
+        "keyPath": "mcpServers",
+        "entryShape": "stdio",
+        "fields": {}
+      }
+    },
+    {
+      "id": "qoder",
+      "label": "Qoder",
+      "verified": true,
+      "capabilities": {
+        "hooks": true,
+        "mcp": true,
+        "failClosed": false,
+        "outputRewrite": true
+      },
+      "detect": {
+        "transcriptPaths": ["\\.qoder"],
+        "configDirs": ["\\.qoder"],
+        "eventCase": "upper",
+        "toolPayloadKey": "tool_response",
+        "mcpToolPrefix": null
+      },
+      "mcpClientInfo": ["qoder"],
+      "hooks": {
+        "file": {
+          "scope": "project",
+          "path": ".qoder/settings.json",
+          "keyPath": "hooks",
+          "entryShape": "claude-nested",
+          "rootFields": {}
+        },
+        "eventNames": {
+          "preToolUse": "PreToolUse",
+          "postToolUse": "PostToolUse",
+          "sessionStart": "SessionStart",
+          "sessionEnd": "SessionEnd",
+          "beforeSubmitPrompt": "UserPromptSubmit",
+          "stop": "Stop"
+        },
+        "asyncEvents": ["SessionStart", "SessionEnd", "Stop"],
+        "matcherEvents": ["PreToolUse", "PostToolUse"],
+        "toolMatcher": "^(Bash|Shell|mcp_call|mcp_get|mcp_list|mcp__.*|CallMcpTool|CallDynamicTool|Task|Agent)$",
+        "env": { "CONTEXTMIND_HOST": "qoder" }
+      },
+      "mcp": {
+        "scope": "user",
+        "path": ".qoder-cn/settings.json",
+        "keyPath": "mcpServers",
+        "entryShape": "stdio",
+        "fields": {}
+      }
+    },
+    {
+      "id": "codebuddy",
+      "label": "CodeBuddy",
+      "verified": true,
+      "capabilities": {
+        "hooks": false,
+        "mcp": true,
+        "failClosed": false,
+        "outputRewrite": false
+      },
+      "detect": {
+        "transcriptPaths": ["\\.codebuddy"],
+        "configDirs": ["\\.codebuddy"],
+        "eventCase": null,
+        "toolPayloadKey": null,
+        "mcpToolPrefix": null
+      },
+      "mcpClientInfo": ["codebuddy"],
+      "hooks": null,
+      "mcp": {
+        "scope": "user",
+        "path": ".codebuddy/mcp.json",
+        "keyPath": "mcpServers",
+        "entryShape": "stdio",
+        "fields": { "autoApprove": [], "timeout": 60000, "disabled": false }
+      }
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "verified": false,
+      "unverifiedReason": "Not installed on this machine, and docs/config.md in openai/codex exposes no mcp_servers section to cite — writing a path here would be a guess that installs governance nowhere. Fill in from a real Codex install, flip verified to true, and it inherits hooks/MCP registration, host stamping and dashboards with no code change.",
+      "capabilities": { "hooks": false, "mcp": false, "failClosed": false, "outputRewrite": false },
+      "detect": {
+        "transcriptPaths": ["\\.codex"],
+        "configDirs": ["\\.codex"],
+        "eventCase": null,
+        "toolPayloadKey": null,
+        "mcpToolPrefix": null
+      },
+      "mcpClientInfo": ["codex"],
+      "hooks": null,
+      "mcp": null
+    },
+    {
+      "id": "trae",
+      "label": "Trae",
+      "verified": false,
+      "unverifiedReason": "No Trae install to read a config off, and no official doc path pinned for its MCP file. Same procedure as codex: verify against a real install, set verified true.",
+      "capabilities": { "hooks": false, "mcp": false, "failClosed": false, "outputRewrite": false },
+      "detect": {
+        "transcriptPaths": ["\\.trae"],
+        "configDirs": ["\\.trae"],
+        "eventCase": null,
+        "toolPayloadKey": null,
+        "mcpToolPrefix": null
+      },
+      "mcpClientInfo": ["trae"],
+      "hooks": null,
+      "mcp": null
+    }
+  ]
+}

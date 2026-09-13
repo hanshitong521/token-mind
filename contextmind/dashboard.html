@@ -562,7 +562,8 @@ function renderEvents() {
 // ── 主渲染 ──
 function render() {
 	if (!DATA) return;
-	$("meta").textContent = DATA.project + " · tokenizer " + DATA.tokenizer + " · 生成于 " + localTime(DATA.generated_at);
+	var hostTag = DATA.host ? " · 宿主 " + DATA.host : DATA.host_filter_dropped ? " · 该账本无 host 列，未分列" : "";
+	$("meta").textContent = DATA.project + hostTag + " · tokenizer " + DATA.tokenizer + " · 生成于 " + localTime(DATA.generated_at);
 	renderKpis();
 	renderSavings();
 	renderHits();
@@ -578,9 +579,14 @@ function render() {
 	renderEvents();
 }
 
+var HOST_FILTER = (function () {
+	var m = /(?:^|[?&])host=([a-z0-9_-]+)/i.exec(location.search);
+	return m ? m[1].toLowerCase() : "";
+})();
+
 async function load() {
 	try {
-		var res = await fetch("/api/data", { cache: "no-store" });
+		var res = await fetch("/api/data" + (HOST_FILTER ? "?host=" + HOST_FILTER : ""), { cache: "no-store" });
 		if (!res.ok) throw new Error("HTTP " + res.status);
 		DATA = await res.json();
 		$("err").hidden = true;

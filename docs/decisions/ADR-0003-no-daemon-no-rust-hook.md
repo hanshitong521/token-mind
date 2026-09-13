@@ -1,6 +1,6 @@
 # ADR-0003: 本切片不做 daemon，也不做 Rust cmhook；提供 start/stop 即说谎
 
-- 状态: Accepted
+- 状态: Superseded（2026-09-11）→ [ADR-0014](ADR-0014-tokenmind-context-os.md)
 - 日期: 2026-09-01
 - 关联: DECISIONS-2026-09-01 决策 6（SKIP Rust cmhook）、spec §7.2 / §27 / G4
 

@@ -1,0 +1,18 @@
+{
+  "ts": "2026-09-11T16:39:14.395Z",
+  "iterations": 16,
+  "client": "cmhook.exe",
+  "thin_runtime_warm": {
+    "p50_ms": 53,
+    "p95_ms": 77,
+    "p99_ms": 77,
+    "min_ms": 51,
+    "max_ms": 77
+  },
+  "production_bar": {
+    "p50": 20,
+    "p95": 50,
+    "p99": 100
+  },
+  "pass": false
+}

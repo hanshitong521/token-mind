@@ -10,6 +10,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
@@ -20,6 +21,7 @@ import { HandleStore, pickJsonPath } from "../lib/handles.mjs";
 import { Dedup, duplicateStub, fingerprint } from "../lib/dedup.mjs";
 import { evaluateRead, estimateFullReadTokens } from "../lib/read-guard.mjs";
 import { extractText, governMcpOutput, isGoverned, profileFor, rewrap } from "../lib/mcp-guard.mjs";
+import { detectAgent as agentOf, detectHost as hostOf } from "../lib/hosts.mjs";
 import { Telemetry, formatSummary } from "../lib/telemetry.mjs";
 import { DEFAULTS, loadConfigFrom, validateConfig } from "../lib/config.mjs";
 
@@ -185,6 +187,27 @@ describe("output gate", () => {
 		assert.equal(budgetFor(tinyCfg, { surface: "shell", failure: false }), 50);
 		assert.equal(budgetFor(tinyCfg, { surface: "shell", failure: true }), 80);
 		assert.equal(budgetFor(tinyCfg, { surface: "mcp", failure: false }), tinyCfg.budget.mcp_default);
+	});
+
+	it("packs against a caller-supplied budget instead of the surface default", () => {
+		// An MCP tool profile declares the size its results are packed to. The
+		// surface default (mcp_default) is wider, so a payload between the two
+		// sizes used to come back untouched while still counting as "over budget".
+		const raw = JSON.stringify({
+			rows: Array.from({ length: 40 }, (_, i) => ({ id: i, payload: "x".repeat(60) })),
+		});
+		const tokens = countTokens(raw);
+		assert.ok(tokens > 380 && tokens < tinyCfg.budget.mcp_default, `payload was ${tokens} tokens`);
+		const r = runOutputGate({ raw, surface: "mcp", cfg: tinyCfg, handles, budgetTokens: 380 });
+		assert.equal(r.budget, 380);
+		assert.ok(r.emittedTokens < r.rawTokens, `expected compression, got ${r.emittedTokens}/${r.rawTokens}`);
+	});
+
+	it("does not let a caller budget shrink the failure budget", () => {
+		// Failures are packed against the wider surface budget so their evidence
+		// survives; a profile size must not override that.
+		const r = runOutputGate({ raw: "x".repeat(3000), cmd: "mvn test", cfg: tinyCfg, handles, exitCode: 1, budgetTokens: 10 });
+		assert.equal(r.budget, 80);
 	});
 
 	it("structural reduce keeps head and tail, not just the head", () => {
@@ -369,6 +392,16 @@ describe("read guard", () => {
 	});
 });
 
+describe("graph-fingerprint", () => {
+	it("adapter cache key changes when graph fp changes", async () => {
+		const { adapterCacheKey } = await import("../lib/result-cache.mjs");
+		const a = adapterCacheKey("context_orient", "FooService", "111");
+		const b = adapterCacheKey("context_orient", "FooService", "222");
+		assert.notEqual(a, b);
+		assert.equal(adapterCacheKey("context_orient", "FooService", "111"), a);
+	});
+});
+
 describe("orient-key", () => {
 	it("collapses FQCN / path / short name / ServiceImpl to one key", async () => {
 		const { normalizeOrientQuery, orientSeenKey } = await import("../lib/orient-key.mjs");
@@ -431,6 +464,34 @@ describe("mcp guard", () => {
 		});
 		assert.equal(r, null);
 	});
+
+	it("hands the tool profile's size to the gate", () => {
+		// The guard decides "over profile" from the profile, so the gate has to
+		// pack against the same number. Passing nothing let it fall back to
+		// budget.mcp_default, which is wider for the Brain tools in particular:
+		// their 450-token answers came back raw.
+		const text = JSON.stringify({ memories: Array.from({ length: 30 }, (_, i) => ({ id: i, body: "y".repeat(80) })) });
+		let seen = null;
+		const r = governMcpOutput({
+			toolOutput: JSON.stringify([{ type: "text", text }]),
+			toolName: "search_project_context",
+			cfg,
+			runGate: (args) => {
+				seen = args.budgetTokens;
+				return {
+					text: "tiny",
+					rawTokens: countTokens(text),
+					emittedTokens: 3,
+					contentType: "json",
+					failure: false,
+					method: "test",
+				};
+			},
+		});
+		assert.equal(seen, profileFor(cfg, "search_project_context").max_tokens);
+		assert.ok(r, "a reduced payload must be handed back for replacement");
+		assert.equal(r.profile.name, "search_project_context");
+	});
 });
 
 describe("telemetry", () => {
@@ -470,6 +531,146 @@ describe("telemetry", () => {
 		assert.equal(t.prune(36500), 0, "nothing is older than 100 years");
 		t.close();
 	});
+
+	it("splits the ledger by host", () => {
+		const path = join(dir, "host.db");
+		const t = new Telemetry({ dbPath: path });
+		t.record({ surface: "mcp", toolName: "Shell", host: "qoder", rawTokens: 900, emittedTokens: 100 });
+		t.record({ surface: "mcp", toolName: "Shell", host: "cursor", rawTokens: 400, emittedTokens: 200 });
+		t.record({ surface: "fetch", toolName: "fetch" });
+		const byHost = Object.fromEntries(t.summary().byHost.map((r) => [r.key, r]));
+		assert.equal(byHost.qoder.raw_tokens, 900);
+		assert.equal(byHost.cursor.tool_emitted_savings, 200);
+		// A row nobody labelled reads as unknown, never as a blank bucket.
+		assert.equal(byHost.unknown.events, 1);
+		t.close();
+	});
+
+	it("splits the ledger by agent", () => {
+		const path = join(dir, "agent.db");
+		const t = new Telemetry({ dbPath: path });
+		t.record({ surface: "mcp", toolName: "Bash", host: "qoder", agent: "Explore", rawTokens: 800, emittedTokens: 100 });
+		t.record({ surface: "mcp", toolName: "Bash", host: "qoder", agent: "main", rawTokens: 300, emittedTokens: 200 });
+		t.record({ surface: "shell", toolName: "Bash", host: "qoder" });
+		const byAgent = Object.fromEntries(t.summary().byAgent.map((r) => [r.key, r]));
+		assert.equal(byAgent.Explore.tool_emitted_savings, 700);
+		assert.equal(byAgent.main.raw_tokens, 300);
+		// Rows written before attribution existed still get a bucket, not a blank one.
+		assert.equal(byAgent.unknown.events, 1);
+		t.close();
+	});
+
+	it("migrates a db written before the host column", () => {
+		const path = join(dir, "legacy.db");
+		const legacy = new DatabaseSync(path);
+		const cols = [
+			"ts TEXT", "session_id TEXT", "task_id TEXT", "surface TEXT", "tool_name TEXT",
+			"content_type TEXT", "success INTEGER", "raw_tokens INTEGER", "emitted_tokens INTEGER",
+			"prevented_read_tokens INTEGER", "tool_emitted_savings INTEGER", "proxy_llm_savings INTEGER",
+			"handle_id TEXT", "handle_created INTEGER", "handle_fetched INTEGER", "dedup_hit INTEGER",
+			"read_blocked INTEGER", "read_override INTEGER", "first_layer TEXT", "adapter_used TEXT",
+			"adapter_missing TEXT", "hook_latency_ms REAL", "gate_latency_ms REAL", "tokenizer TEXT",
+			"note TEXT",
+		];
+		legacy.exec(`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ${cols.join(", ")})`);
+		legacy.prepare("INSERT INTO events (ts, surface, raw_tokens, emitted_tokens) VALUES (?, ?, ?, ?)").run(
+			"2026-01-01T00:00:00.000Z",
+			"shell",
+			100,
+			20,
+		);
+		legacy.close();
+
+		const t = new Telemetry({ dbPath: path });
+		assert.equal(t.failed, null, `open must not fail on a legacy db: ${t.failed}`);
+		t.record({ surface: "shell", toolName: "Bash", host: "qoder", rawTokens: 50, emittedTokens: 10 });
+		const sum = t.summary();
+		// The migration keeps history and labels only what arrives after it.
+		assert.equal(sum.totals.events, 2);
+		assert.equal(sum.totals.raw_tokens, 150);
+		assert.deepEqual(
+			sum.byHost.map((r) => `${r.key}:${r.events}`).sort(),
+			["(none):1", "qoder:1"],
+		);
+		t.close();
+	});
+});
+
+/**
+ * The row's host comes from the payload, never from the writing process' env:
+ * the daemon is long-lived, so CONTEXTMIND_HOST there is whatever started it.
+ */
+describe("hostOf", () => {
+	it("reads Qoder's shape", () => {
+		assert.equal(
+			hostOf({
+				hook_event_name: "PostToolUse",
+				tool_name: "Bash",
+				tool_response: [{ type: "text", text: "ok" }],
+				transcript_path: "C:/Users/dev/.qoder-cn/projects/p/transcript.jsonl",
+			}),
+			"qoder",
+		);
+		// Pre-tool carries no tool_response at all — the event name is the only clue.
+		assert.equal(hostOf({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: {} }), "qoder");
+	});
+
+	it("reads Cursor's shape", () => {
+		assert.equal(
+			hostOf({
+				hook_event_name: "postToolUse",
+				tool_name: "Shell",
+				tool_output: "exit_code=0\nok",
+				transcript_path: "C:/Users/dev/.cursor/projects/p/transcript.jsonl",
+			}),
+			"cursor",
+		);
+		assert.equal(hostOf({ hook_event_name: "beforeSubmitPrompt", prompt: "hi" }), "cursor");
+	});
+
+	it("returns unknown when the payload does not say", () => {
+		assert.equal(hostOf({}), "unknown");
+		assert.equal(hostOf(undefined), "unknown");
+		// Both spellings at once is a contradiction, not a Qoder call.
+		assert.equal(hostOf({ tool_response: "x", tool_output: "x" }), "unknown");
+		assert.equal(hostOf({ tool_name: "Read", tool_input: { file_path: "a.java" }, cwd: "/p" }), "unknown");
+	});
+});
+
+/**
+ * The agent column is attribution, not a schema we control: each host names the
+ * spawner differently, and an unknown shape still has to land in a readable bucket.
+ */
+describe("detectAgent", () => {
+	it("takes the agent field in whatever spelling the host uses", () => {
+		assert.equal(agentOf({ agent_type: "Explore" }), "Explore");
+		assert.equal(agentOf({ subagent_type: "general-purpose" }), "general-purpose");
+		assert.equal(agentOf({ agentId: "a-7" }), "a-7");
+		// Qoder's real id is `<role>-<run id>`; the run id would explode every GROUP BY bucket.
+		assert.equal(agentOf({ agent_id: "aExplore-2754952640b74ae5" }), "aExplore");
+		assert.equal(agentOf({ agent_id: "general-purpose-deadbeefcafe01" }), "general-purpose");
+		// A label is a group-by key, so path separators and control bytes are scrubbed.
+		assert.equal(agentOf({ agent: "../secret name" }), ".._secret_name");
+	});
+
+	it("reads a subagent transcript path when no field says so", () => {
+		assert.equal(
+			agentOf({ transcript_path: "C:/Users/dev/.qoder-cn/projects/p/subagents/agent-Explore-ff00ff.jsonl" }),
+			"Explore",
+		);
+		// Unrecognisable below the subagents directory is still a subagent, not main.
+		assert.equal(
+			agentOf({ transcript_path: "C:/Users/dev/.qoder-cn/projects/p/subagents/weird.json" }),
+			"subagent",
+		);
+	});
+
+	it("separates the main session from an unattributable payload", () => {
+		assert.equal(agentOf({ tool_name: "Bash", transcript_path: "C:/p/transcript.jsonl" }), "main");
+		assert.equal(agentOf({}), "main");
+		assert.equal(agentOf(undefined), "unknown");
+		assert.equal(agentOf({ agent: "   " }), "main", "blank is not a label");
+	});
 });
 
 describe("config", () => {
@@ -499,6 +700,20 @@ describe("config", () => {
 		writeFileSync(join(projPath, ".contextmind.json"), JSON.stringify({ handles: { ttl_hours: 1 } }));
 		const cfg = loadConfigFrom(NO_USER, projPath);
 		assert.equal(cfg.handles.ttl_hours, DEFAULTS.handles.ttl_hours);
+	});
+
+	it("keeps a stale key from voiding the live settings beside it", () => {
+		const projPath = join(dir, "proj4");
+		mkdirSync(projPath, { recursive: true });
+		const file = (extra) => {
+			rmSync(join(projPath, ".contextmind.json"), { force: true });
+			writeFileSync(join(projPath, ".contextmind.json"), JSON.stringify({ ...extra, budget: { orient: 777 } }));
+			return loadConfigFrom(NO_USER, projPath).budget.orient;
+		};
+		// A reader that was deleted, not a typo: tolerated.
+		assert.equal(file({ memory: { episodic_enabled: false }, cache_engine: { brainSync: true } }), 777);
+		// A key nobody ever shipped still voids the whole file.
+		assert.equal(file({ nope: 1 }), DEFAULTS.budget.orient);
 	});
 
 	it("rejects an unsupported first layer instead of inventing one", () => {
