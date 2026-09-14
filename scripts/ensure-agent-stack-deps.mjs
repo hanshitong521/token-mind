@@ -43,17 +43,17 @@ spawnSync(process.execPath, [CLI, "start", ROOT], {
 });
 checks.runtime = await httpOk("http://127.0.0.1:18787/health", 4000);
 
-if (!(await httpOk("http://127.0.0.1:18788/health", 2000)) && existsSync(BRAIN_START)) {
+if (!(await httpOk("http://127.0.0.1:18787/health", 2000)) && existsSync(BRAIN_START)) {
 	spawnSync(
 		"powershell",
 		["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", BRAIN_START],
 		{ cwd: ROOT, encoding: "utf8", timeout: 30_000, windowsHide: true },
 	);
-	for (let i = 0; i < 8 && !(await httpOk("http://127.0.0.1:18788/health", 2000)); i++) {
+	for (let i = 0; i < 8 && !(await httpOk("http://127.0.0.1:18787/health", 2000)); i++) {
 		await sleep(1000);
 	}
 }
-checks.brain = await httpOk("http://127.0.0.1:18788/health", 3000);
+checks.brain = await httpOk("http://127.0.0.1:18787/health", 3000);
 
 try {
 	const { loadConfig } = await import(pathToFileURL(join(ROOT, ".cursor/contextmind/lib/config.mjs")).href);

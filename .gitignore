@@ -32,6 +32,10 @@ _deb.mjs
 _deb2.mjs
 _smoke.mjs
 
+# native cmhook build artifacts
+native/obj/
+native/bin/
+
 # ContextMind 本机运行时状态（handle/telemetry 数据库，可重建，不入库）
 .contextmind/
 *.db
