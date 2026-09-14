@@ -45,7 +45,14 @@ import { probeCodegraphSpawn } from "./lib/codegraph-spawn.mjs";
 import { probeAdapters } from "./lib/probe.mjs";
 import { countTokens, TOKENIZER_ID } from "./lib/tokens.mjs";
 import { runOutputGate } from "./lib/output-gate.mjs";
-import { isListening, startDaemon, stopDaemon, runtimeHost, runtimePort } from "./lib/runtime/lifecycle.mjs";
+import {
+	isListening,
+	resolveRuntimePort,
+	startDaemon,
+	stopDaemon,
+	runtimeHost,
+	runtimePort,
+} from "./lib/runtime/lifecycle.mjs";
 import { Dedup } from "./lib/dedup.mjs";
 import { classify } from "./lib/classify.mjs";
 import { contextmindStdioEntry, repairMcpMounts } from "./lib/mcp-repair.mjs";
@@ -921,12 +928,21 @@ async function doctor(projectRoot) {
 		})(),
 	});
 
+	// isListening() defaults to resolveRuntimePort() — the port in the pid file, i.e. the
+	// one the daemon actually bound. Report that same port, not runtimePort() (the
+	// *preferred* one): when the Brain dashboard holds 18787 the daemon falls back to an
+	// ephemeral port, and printing the preferred port next to a PASS points at a different
+	// process than the one that answered — a green row for the wrong listener.
 	const listening = await isListening();
+	const livePort = resolveRuntimePort();
+	const preferredPort = runtimePort();
 	rows.push({
 		label: "tokenmind runtime",
 		status: listening ? "PASS" : "WARN",
 		detail: listening
-			? `http://${runtimeHost()}:${runtimePort()}/health`
+			? `http://${runtimeHost()}:${livePort}/health${
+					livePort === preferredPort ? "" : ` (preferred ${preferredPort} is held by another listener)`
+				}`
 			: "not listening — run: contextmind start",
 	});
 

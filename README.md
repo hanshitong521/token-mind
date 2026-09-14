@@ -5,6 +5,9 @@ ContextMind 的开发仓：面向 Cursor / Qoder 等 Coding Agent 的上下文�
 > **多 IDE 兼容**：已适配 Cursor、Qoder、WorkBuddy（hooks+MCP）；CodeBuddy（MCP only）。
 > WorkBuddy 的 hook 入口是用户级 `~/.workbuddy-ai/settings.json` 的 `hooks` 键，且 hook 经 Git Bash
 > 派生（`cmd.exe //d //c`），详见 [docs/AGENT-HOST-COMPAT.md](docs/AGENT-HOST-COMPAT.md) §3.4。
+>
+> **在新机器上安装** → [docs/INSTALL.md](docs/INSTALL.md)（含各 Host 配置落点、避坑清单、故障排查）。
+> **要适配新的 Coding Agent** → [docs/ADD-A-HOST.md](docs/ADD-A-HOST.md)（给 agent 看的 playbook）。
 
 > 当前状态：**S2+S3 切片上线，产品未完成**（spec G0–G8 未全部执行）。见
 > [docs/reports/SLICE_REPORT_S2_S3.md](docs/reports/SLICE_REPORT_S2_S3.md)。
