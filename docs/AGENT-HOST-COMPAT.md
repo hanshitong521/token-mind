@@ -14,7 +14,7 @@
 | `cursor` | Cursor | ✅ | ✅ | ✅ | 项目级 `.cursor/hooks.json` + `.cursor/mcp.json` |
 | `qoder` | Qoder | ✅ | ✅ | ✅ | Hooks 在 `.qoder/settings.json`；MCP 在 **用户级** `~/.qoder-cn/settings.json` |
 | `codebuddy` | CodeBuddy | ✅ | ❌ | ✅ | 仅 MCP（`~/.codebuddy/mcp.json`），无 hook 治理 |
-| `workbuddy` | WorkBuddy | ✅ | ⚠️ | ✅ | **MCP 已通**（`~/.workbuddy/connectors/*/mcp.json`，uid 用 glob 解析，见 §3.4）。Hook **引擎存在但当前通道被关**（实测 `CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS=1` + 能力表无 hook），故 `capabilities.hooks: false`；证据与重开步骤见 §3.4 引述 |
+| `workbuddy` | WorkBuddy | ✅ | ✅ | ✅ | Hook 走**用户级** `~/.workbuddy-ai/settings.json` 的 `hooks` 键（实测可用，非插件 manifest）；MCP 在 `~/.workbuddy-ai/mcp.json`。细节见 §3.4 |
 | `codex` | Codex | ❌ | — | — | 占位；`unverifiedReason` 写明缺实机路径，**install 不会写配置** |
 | `trae` | Trae | ❌ | — | — | 同上 |
 
@@ -149,59 +149,51 @@ post 改写：
 | Cursor | 项目 `.cursor/hooks.json` | 项目 `.cursor/mcp.json` |
 | Qoder | 项目 `.qoder/settings.json` | **用户** `~/.qoder-cn/settings.json` |
 | CodeBuddy | — | 用户 `~/.codebuddy/mcp.json` |
-| WorkBuddy | 插件 `hooks/hooks.json`（**引擎存在，当前通道被关**，见下方引述） | 用户 `~/.workbuddy/connectors/*/mcp.json`（**uid 通配**） |
+| WorkBuddy | 用户 `~/.workbuddy-ai/settings.json`（`hooks` 键，热加载） | 用户 `~/.workbuddy-ai/mcp.json` |
 
 `contextmind install` 会对 **每个 verified 且具备能力的 Host** 注册 ContextMind MCP + project-brain（stdio）。Qoder 用户级 MCP 是已知差异 — 修 MCP 挂载看 [`contextmind/lib/mcp-repair.mjs`](../contextmind/lib/mcp-repair.mjs)。
 
-**WorkBuddy 两个专属约定（都落在 profile，不落代码分支）**
+**WorkBuddy 专属约定（都落在 profile，不落代码分支）**
 
-1. **uid 通配路径** — WorkBuddy 把 connector 配置放在 `connectors/<uid>/`，uid 每装机不同。
-   `hosts.json` 里写 `path: ".workbuddy/connectors/*/mcp.json"`，由 `hosts.mjs:resolveConfigFile()`
-   展开。同级目录的**排序规则**（`pickWildcardSibling`）：
-   - 带 live 标记的目录优先（`connector-states*` / `.master.key`）— 那是 App 实际在跑的 profile；
-   - 其次是 `mcp.json` mtime 最新的；
-   - 最后才 `default`，再退字典序；无同级目录时回退字面路径，保证 `backupOnce` 仍有具体目标。
-
-   **不要**再写死 `connectors/default/`：实机上 live profile 在 UUID 目录（178 个 server +
-   `connector-states.v3.json` + `.master.key`），`default/` 是 98 个 server 的陈旧副本 ——
-   「优先 default」会把 ContextMind 装到宿主根本不读的位置。
+1. **用户目录是 `.workbuddy-ai`，MCP 在 `~/.workbuddy-ai/mcp.json`** — 早期记录写的是
+   `.workbuddy/connectors/*/mcp.json`（uid 通配）。实机核对后是错的：`~/.workbuddy/` 是另一个
+   产品的目录，WorkBuddy 自己读的是 `~/.workbuddy-ai/`，MCP 配置就是该目录下的 `mcp.json`
+   （日志里 `McpConfigManager` 直接加载这个文件）。所以 `hosts.json` 的 `mcp.path` 改为
+   `.workbuddy-ai/mcp.json`，**不再**需要 glob —— uid 通配只出现在 connector 目录，那不是我们写的位置。
+   `resolveConfigFile()` 的 glob 分支保留（其它 Host 仍可能按装机 id 分目录），其行为由
+   `tests/install-plan.test.mjs` 的 "globbed config paths" 用例守住。
 2. **Brain 挂载不再按 host 名判定** — 原先 `mcp-repair.mjs` 用 `profile.id === "cursor"` 决定是否注入
    `project-brain`，已改为读 `profile.mcp.mountBrain`。WorkBuddy 是第一个「用户级 + 要挂 Brain」的 Host，
    正是这行硬编码会漏掉它的场景。
-3. **`cwd` 条件化** — `profile.mcp.cwdSupported: false` 时 `brainStdioEntry()` 省略 `cwd` 键。
+   另外补了 **venv 自动探测**（`detectBrainPython()`）：`brain.python` 默认为空，而 mountBrain 是
+   profile 声明要挂，二者一叠加就是「新 Host 上 Brain 静默缺失」—— 不报错，只是少一个 server。
+   现在配置为空时回退到同级 `project-brain-agent/.venv`；显式配置仍优先，且失效的显式配置不会被悄悄改写。
+3. **用户级 MCP 不带 `cwd`** — connector 加载器不保证透传 `cwd`，profile 声明 `cwdSupported: false`。
    Brain 靠 `server.py` 的 `__file__` 自解析 `src` 根，无 `cwd` 也能起（详见 Brain 仓
    [`AGENT-HOST-COMPAT.md`](../../project-brain-agent/docs/AGENT-HOST-COMPAT.md) §3.1）。
 
-> **Hook：机制存在，但当前会话被显式关闭**（2026-09-13 实机验证，非推测）
+> **Hook：可用（2026-09-14 实机验证 —— 推翻 09-13 的「通道被关」结论）**
 >
-> WorkBuddy **有完整的 Claude-Code 风格 hook 引擎**，但 Hook Extension 在**当前 host 配置下不启用**，
-> 所以 `capabilities.hooks: false` 是**实测结论**，不是「没调研过」的占位。证据分三层：
+> 09-13 的探针放在 `.codebuddy/hooks.json`、`.workbuddy/hooks.json` 和插件级 `hooks/hooks.json`，
+> **三个位置都不对**：「未触发」是路径写错了，不是能力被关。真实入口是
+> **用户级 `~/.workbuddy-ai/settings.json` 的 `hooks` 键**，Claude 嵌套形状。改完**热加载**，
+> 下一次工具调用即生效，无需重启会话 —— 09-13 留下的「未重启」怀疑同样不成立。
 >
-> 1. **引擎存在** — `cli/dist/codebuddy.js` 内有 `HookExtensionLoader` 类
->    （`type = PluginExtensionType.Hook`），加载路径常量 `"hooks/hooks.json"`，
->    逃逸开关常量 `"CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS"`，并有 `areExtendedPluginHooksDisabled()`。
->    同 bundle 内 `PreToolUse` 出现 37 次。
-> 2. **事件契约** — 官方插件 `hookify` / `superpowers` 的 `hooks/hooks.json` 给出真实形状：
->    事件 `PreToolUse` · `PostToolUse` · `Stop` · `UserPromptSubmit` · `SessionStart`；
->    形状 = Claude 嵌套 `{ hooks: { <Event>: [ { matcher?, hooks: [ { type:"command", command, timeout } ] } ] } }`；
->    命令内用 `${CODEBUDDY_PLUGIN_ROOT}`（老插件用 `${CLAUDE_PLUGIN_ROOT}`）。
->    Windows 下 hook 走 `buildHookSpawnOptions`，支持 `shell: powershell`，并会做 `windowsPathToUnix` 转换。
-> 3. **当前被禁用** — 运行中 hook 进程的环境里
->    `CODEBUDDY_DISABLE_EXTENDED_PLUGIN_HOOKS=1`，且 `CODEBUDDY_HOST_CAPABILITIES="elicitation.form,weixinpay.interception"`
->    —— **能力列表里没有 hook**。实测：`.codebuddy/hooks.json`、`.workbuddy/hooks.json`、
->    以及注册进 `installed_plugins.json` 的插件级 `hooks/hooks.json`（含 `pre`/`post` 双向探针）
->    **三者均未触发**（探针脚本本身单测通过，排除脚本 bug）。
+> 实测契约（`hosts.json` 的 `notes` 字段里也记了一份）：
+> - 事件名 **PascalCase**：`PreToolUse` / `PostToolUse` / `UserPromptSubmit` / `SessionStart` /
+>   `SessionEnd` / `Stop`；`install` 已按此映射写入 6 条。
+> - **`command` 必须是单个字符串**；写 `args` 数组会被忽略（带 args 的探针完全没执行）。
+> - **hook 经 Git Bash 派生**，`cmd.exe /d /c` 里的 `/d` 被 MSYS 转成盘符，整条命令失效；
+>   必须写 `cmd.exe //d //c "..."`（profile 的 `leafCommandString: cmd.exe //d //c "{script}"`）。
+> - `tool_name` 是 **CLI 拼写**（`Bash` / `Read` / `Write` …），不是 IDE 拼写（`execute_command`），
+>   故 `toolMatcher` 用 `^(Bash|Read|Write|...)$`。
+> - `PreToolUse` 的 `permissionDecision: "deny"` **生效**，Bash 与 Read 都能拦下。
+> - `PostToolUse` 的 `updatedToolOutput` **生效**（Read 读到的正文被整体替换）。
 >
-> **加载时机**：hook 配置在**会话启动时**读取 —— 运行中新建/注册一律不生效，必须重启会话。
-> 因此上面的「未触发」既可能是能力被关，也无法排除「未重启」，**两层原因叠加**。
->
-> **下一步（要开 hook 才做）**：
-> - 找 host 侧开关（`CODEBUDDY_HOST_CAPABILITIES` 是否可由 host 配置扩展，或该 env 由谁下发）；
-> - 重启会话后重跑同一探针，得到「重启后是否触发」的干净结论；
-> - 只有拿到触发证据 + 输出契约（`hookSpecificOutput.permissionDecision` 还是别的字段）后，
->   才把 `hooks` 段填进 profile 并 `capabilities.hooks: true`。
->
-> **不要**在拿到证据前填 `hooks` 段 —— 一个猜出来的路径会让 `install` 把治理写到没人读的地方。
+> **已知边界**：Bash 的 `tool_response` 只有元信息（`exitCode` / `signal` / 截断字节数），
+> **没有 stdout 正文**，所以 Shell Output Gate 在这个 Host 上无原文可压缩（`report` 里 Bash 行的
+> raw 为 0 即此原因）。Read 的 `tool_response` 是带正文的字符串，可压缩可改写。
+> 因此 WorkBuddy 的 `outputRewrite` 对 Read 成立、对 Bash 不成立。
 
 ### 3.5 识别与 telemetry
 

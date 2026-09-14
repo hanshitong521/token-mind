@@ -314,8 +314,19 @@ export function hookEntryFor(
 	// run bare `cmd.exe` and ignore the rest, so the row collapses into one quoted
 	// command line instead. Own-entry recognition still matches: the cm-* path is
 	// inside the joined string.
-	if (profile.hooks.file?.leafCommandString === true) {
-		leaf.command = `cmd.exe /d /c "${leaf.args[2]}"`;
+	//
+	// `true` means the Claude default (`cmd.exe /d /c "<script>"`). A string is a
+	// template with `{script}`, for hosts whose spawn is not plain cmd: WorkBuddy
+	// runs hooks through Git Bash, where MSYS rewrites `/d` into a drive path and
+	// the whole invocation dies, so its profile spells `cmd.exe //d //c "{script}"`
+	// — verified on a real install, where the single-slash form never fired.
+	const leafCommandString = profile.hooks.file?.leafCommandString;
+	if (leafCommandString) {
+		const script = leaf.args[2];
+		leaf.command =
+			typeof leafCommandString === "string"
+				? leafCommandString.replaceAll("{script}", script)
+				: `cmd.exe /d /c "${script}"`;
 		delete leaf.args;
 	}
 	if (Object.keys(env).length) leaf.env = env;

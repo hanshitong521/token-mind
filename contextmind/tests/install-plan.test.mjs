@@ -297,28 +297,71 @@ describe("a third host, described only in data", () => {
 });
 
 describe("workbuddy (verified contract)", () => {
-	// WorkBuddy is the first host whose MCP config is namespaced by a per-install id
-	// (`connectors/<uid>/mcp.json`), so its path must be a glob the resolver expands, not a
-	// literal `default`. It is also the first mcp-only host that wants the Brain mounted —
+	// WorkBuddy was the first host believed to be MCP-only. A probe against a real install
+	// (2026-09-14) overturned that: hooks fire from the `hooks` key of the USER settings file
+	// `~/.workbuddy-ai/settings.json`, hot-reloaded, and `permissionDecision: deny` blocks a
+	// call. Three earlier probe placements — `.codebuddy/hooks.json`, `.workbuddy/hooks.json`
+	// and a plugin's `hooks/hooks.json` — stayed silent, which is what produced the
+	// "channel disabled" reading; the directory is `.workbuddy-ai`, not `.workbuddy`.
+	// It is also the first host that wants the Brain mounted while being user-scope —
 	// which used to key off `profile.id === "cursor"`.
-	it("resolves a globbed connector path against the real directory", () => {
+	it("keeps its MCP config at the user root the host actually reads", () => {
 		const profile = profileFor("workbuddy");
 		assert.equal(profile.verified, true);
-		assert.match(profile.mcp.path, /\*/);
-		const home = mkdtempSync(join(tmpdir(), "cm-wb-home-"));
-		mkdirSync(join(home, ".workbuddy", "connectors", "default"), { recursive: true });
-		assert.equal(
-			registryFns.resolveConfigFile(profile.mcp, { home }),
-			join(home, ".workbuddy", "connectors", "default", "mcp.json"),
-		);
+		assert.equal(profile.mcp.scope, "user");
+		assert.equal(profile.mcp.path, ".workbuddy-ai/mcp.json");
+		assert.equal(profile.mcp.mountBrain, true);
+		assert.equal(profile.mcp.cwdSupported, false);
 	});
 
-	it("prefers the live uuid profile over the stale default sibling", () => {
-		// The real box keeps the running config under a UUID dir (with connector-states)
-		// and a stale copy under default/. Writing to default/ would install ContextMind
-		// where the host never reads it — the exact bug a bare "prefer default" rule has.
-		const home = mkdtempSync(join(tmpdir(), "cm-wb-live-"));
-		const root = join(home, ".workbuddy", "connectors");
+	it("declares a hook surface in the user settings file, not a plugin manifest", () => {
+		const profile = profileFor("workbuddy");
+		assert.equal(profile.capabilities.hooks, true);
+		assert.equal(profile.hooks.file.scope, "user");
+		assert.equal(profile.hooks.file.path, ".workbuddy-ai/settings.json");
+		assert.equal(profile.hooks.file.keyPath, "hooks");
+		assert.equal(profile.hooks.file.entryShape, "claude-nested");
+	});
+
+	it("maps canonical events onto the host's PascalCase spelling", () => {
+		// The host loader matches `PreToolUse`, not the registry's `preToolUse`.
+		const profile = profileFor("workbuddy");
+		assert.equal(registryFns.hookEventName(profile, "preToolUse"), "PreToolUse");
+		assert.equal(registryFns.hookEventName(profile, "postToolUse"), "PostToolUse");
+		assert.equal(registryFns.hookEventName(profile, "beforeSubmitPrompt"), "UserPromptSubmit");
+	});
+
+	it("takes hook rows now that the profile declares a hook surface", () => {
+		const rows = dedupeEntriesForHost(profileFor("workbuddy"), HOOK_ENTRIES);
+		assert.ok(rows.length > 0, "a hook-capable host is no longer skipped");
+		assert.ok(rows.some((r) => r.event === "PreToolUse"));
+		assert.ok(rows.some((r) => r.event === "PostToolUse"));
+	});
+
+	it("spells the leaf command with doubled slashes, and never as an args array", () => {
+		// Hooks are spawned through Git Bash, where MSYS rewrites `/d` into a drive path and the
+		// whole invocation dies — the single-slash form never fired on a real install. `args` is
+		// ignored outright, so the command has to be one string.
+		const row = hookEntryFor(profileFor("workbuddy"), {
+			hook: "cm-pre-tool",
+			event: "PreToolUse",
+			projectRoot: ROOT,
+		});
+		assert.ok(row, "a hook-capable host gets a row");
+		const leaf = row.hooks[0];
+		assert.match(leaf.command, /^cmd\.exe \/\/d \/\/c "/);
+		assert.match(leaf.command, /cm-pre-tool\.cmd/);
+		assert.ok(!("args" in leaf), "WorkBuddy ignores an args array");
+	});
+});
+
+describe("globbed config paths", () => {
+	// No shipped profile uses a wildcard any more (WorkBuddy's connector path was the last
+	// one, and a real install proved it wrong), but the resolver keeps the behaviour: a host
+	// that namespaces config per install cannot have its uid pinned in the registry.
+	it("prefers the live uuid sibling over the stale default one", () => {
+		const home = mkdtempSync(join(tmpdir(), "cm-glob-live-"));
+		const root = join(home, ".somehost", "connectors");
 		const stale = join(root, "default");
 		const liveUid = join(root, "0f0f0f0f-1111-2222-3333-444455556666");
 		mkdirSync(stale, { recursive: true });
@@ -326,21 +369,20 @@ describe("workbuddy (verified contract)", () => {
 		writeFileSync(join(stale, "mcp.json"), "{}");
 		writeFileSync(join(liveUid, "mcp.json"), "{}");
 		writeFileSync(join(liveUid, "connector-states.v3.json"), "{}");
-		const resolved = registryFns.resolveConfigFile(profileFor("workbuddy").mcp, { home });
-		assert.equal(resolved, join(liveUid, "mcp.json"), "the state-marker sibling is the live profile");
+		const target = { scope: "user", path: ".somehost/connectors/*/mcp.json" };
+		assert.equal(
+			registryFns.resolveConfigFile(target, { home }),
+			join(liveUid, "mcp.json"),
+			"the state-marker sibling is the live profile",
+		);
 	});
 
-	it("declares the Brain mount and the cwd capability on the profile, not in code", () => {
-		const profile = profileFor("workbuddy");
-		assert.equal(profile.mcp.mountBrain, true);
-		assert.equal(profile.mcp.cwdSupported, false);
-		assert.equal(profile.capabilities.hooks, false, "no hook surface: WorkBuddy is an MCP-only host");
-	});
-
-	it("takes no hook rows, because its profile declares no hook surface", () => {
-		const profile = profileFor("workbuddy");
-		assert.deepEqual(dedupeEntriesForHost(profile, HOOK_ENTRIES), []);
-		assert.equal(hookEntryFor(profile, { hook: "cm-pre-tool", event: "preToolUse", projectRoot: ROOT }), null);
+	it("falls back to the only sibling when there is no marker to rank", () => {
+		const home = mkdtempSync(join(tmpdir(), "cm-glob-only-"));
+		const dir = join(home, ".somehost", "connectors", "default");
+		mkdirSync(dir, { recursive: true });
+		const target = { scope: "user", path: ".somehost/connectors/*/mcp.json" };
+		assert.equal(registryFns.resolveConfigFile(target, { home }), join(dir, "mcp.json"));
 	});
 });
 

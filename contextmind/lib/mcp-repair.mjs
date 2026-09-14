@@ -27,8 +27,38 @@ import { wrapNodeBin } from "./shell-guard.mjs";
  *
  * @param {any} profile host profile; null falls back to the legacy cursor behaviour
  */
+/**
+ * Locate the Brain venv — configured, or found beside the project.
+ *
+ * A profile can declare "this host wants the Brain mounted" (mcp.mountBrain), but the
+ * venv path is per-machine, and `brain.python` defaults to "". An install that only
+ * read config therefore skipped the Brain on every fresh host, silently: no error,
+ * just one server fewer. WorkBuddy is the first host where the gap is visible — it is
+ * user-scope, so no project config ever had a path written into it for that host.
+ *
+ * Fall back to the sibling checkout (both repos sit under one root in this workspace)
+ * before giving up. An explicit configured path still wins, and a configured path that
+ * no longer exists is not silently replaced — the caller must be able to see that the
+ * Brain is missing rather than have it quietly repointed.
+ */
+export function detectBrainPython(projectRoot, cfg) {
+	const configured = cfg?.brain?.python ? String(cfg.brain.python).trim() : "";
+	if (configured) return resolve(configured);
+	const root = resolve(projectRoot);
+	for (const base of [dirname(root), root]) {
+		for (const leaf of [
+			join("project-brain-agent", ".venv", "Scripts", "python.exe"),
+			join("project-brain-agent", ".venv", "bin", "python"),
+		]) {
+			const candidate = join(base, leaf);
+			if (existsSync(candidate)) return candidate;
+		}
+	}
+	return null;
+}
+
 export function brainStdioEntry(projectRoot, cfg, profile = null) {
-	const py = cfg?.brain?.python ? resolve(String(cfg.brain.python)) : null;
+	const py = detectBrainPython(projectRoot, cfg);
 	if (!py || !existsSync(py)) return null;
 	const brainRoot = resolve(dirname(py), "..", "..");
 	const projectId = String(cfg?.brain?.project_id ?? "shejiuPro").trim();
