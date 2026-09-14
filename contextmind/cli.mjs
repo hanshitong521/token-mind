@@ -298,7 +298,12 @@ function hostPresent(profile, { projectRoot, home }) {
  * overrides that for a deliberate install.
  */
 function selectInstallHosts(flags, projectRoot) {
-	const home = process.env.USERPROFILE || process.env.HOME || homedir();
+	// userHome(), not a second USERPROFILE read: the two must agree or `--home` /
+	// CONTEXTMIND_INSTALL_HOME isolates the *write* while this scan still probes the
+	// real home, selecting a user-scope host whose config it will then write to the
+	// isolated one. That is how a test run reaches the developer's actual
+	// ~/.workbuddy/connectors/<uid>/mcp.json.
+	const home = userHome();
 	const wanted =
 		typeof flags.hosts === "string"
 			? flags.hosts

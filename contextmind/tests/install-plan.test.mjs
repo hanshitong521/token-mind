@@ -67,7 +67,8 @@ writeFileSync(
 );
 process.env.CONTEXTMIND_HOSTS_FILE = registryFile;
 
-const { hostIds, profileFor, resolveConfigFile } = await import(pathToFileURL(HOSTS).href);
+const registryFns = await import(pathToFileURL(HOSTS).href);
+const { hostIds, profileFor, resolveConfigFile } = registryFns;
 const {
 	HOOK_ENTRIES,
 	HOOK_SCRIPT_DIR,
@@ -296,50 +297,30 @@ describe("a third host, described only in data", () => {
 });
 
 describe("trae (verified contract)", () => {
-	// Trae is the first host that reads Claude Code's nested shape but not its leaf schema:
-	// the row it accepts is `{ command: "<one string>", timeout, env }` — an `args` array is
-	// dropped, which would run bare `cmd.exe` and install governance nowhere. It also has no
-	// SessionEnd event, so that row must collapse away, and its MCP file is user-scope under
-	// an AppData path that resolves against the home dir, not a literal `%APPDATA%`.
-	it("carries hooks and MCP, and refuses per-row failClosed and output rewrite", () => {
+	// Measured 2026-09-13 and re-checked when this branch merged: this Trae build registers
+	// .trae/hooks.json as a context asset but never dispatches PreToolUse/PostToolUse to
+	// external commands, so capabilities.hooks is false and NO rows are installed. The hooks
+	// block stays in the profile so install/fix-hooks keep the launchers ready for a build that
+	// does dispatch — hence these assertions target the declared shape, not generated rows.
+	it("declares no hook capability, and therefore installs no rows", () => {
 		const profile = profileFor("trae");
 		assert.equal(profile.verified, true);
-		assert.deepEqual(profile.capabilities, {
-			hooks: true,
-			mcp: true,
-			failClosed: false,
-			outputRewrite: false,
-		});
+		assert.equal(profile.capabilities.hooks, false, "measured: this build never dispatches hook commands");
+		assert.deepEqual(dedupeEntriesForHost(profile, HOOK_ENTRIES), []);
+		assert.equal(hookEntryFor(profile, { hook: "cm-pre-tool", event: "PreToolUse", projectRoot: ROOT }), null);
 	});
 
-	it("collapses SessionEnd away and keeps the five events Trae actually fires", () => {
-		assert.deepEqual(rows("trae").map((r) => r.event), [
-			"PreToolUse",
-			"PostToolUse",
-			"SessionStart",
-			"UserPromptSubmit",
-			"Stop",
-		]);
+	it("keeps the hook block declared, so launchers stay ready for a build that dispatches", () => {
+		const profile = profileFor("trae");
+		assert.equal(profile.hooks.file.path, ".trae/hooks.json");
+		assert.equal(profile.hooks.file.entryShape, "claude-nested");
+		assert.equal(profile.hooks.file.leafCommandString, true, "Trae drops an args array — one command string");
+		assert.ok(profile.hooks.matcherEvents.includes("PreToolUse"));
+		assert.match(profile.hooks.toolMatcher, /run_mcp/, "Trae routes every MCP tool through run_mcp");
+		assert.match(profile.hooks.toolMatcher, /Shell/, "Trae names its shell tool Shell, not Bash");
 	});
 
-	it("writes the leaf as a single quoted command string, not command+args", () => {
-		const entries = byEvent("trae");
-		const leaf = entries.PreToolUse.hooks[0];
-		assert.ok(!("args" in leaf), "Trae drops an args array and would run bare cmd.exe");
-		assert.match(leaf.command, /^cmd\.exe \/d \/c "C:\\Users\\dev\\proj\\\.cursor\\hooks\\cm-pre-tool\.cmd"$/);
-		assert.equal(leaf.name, "contextmind-cm-pre-tool");
-		assert.equal(entries.PreToolUse.matcher, profileFor("trae").hooks.toolMatcher);
-		assert.equal(entries.Stop.async, false, "no asyncEvents: a fire-and-forget Stop loses the session flush");
-		assert.ok(!("matcher" in entries.Stop), "a non-tool event must not spawn a hook per tool");
-		assert.deepEqual(entries.SessionStart.hooks[0].env, { CONTEXTMIND_HOST: "trae" });
-	});
-
-	it("recognises its own collapsed row, so a reinstall replaces instead of doubling", () => {
-		const collapsed = byEvent("trae").Stop;
-		assert.equal(isOwnHookEntry(profileFor("trae"), collapsed), true);
-	});
-
-	it("mounts the Brain user-scope, without a cwd the loader may reject", () => {
+it("mounts the Brain user-scope, without a cwd the loader may reject", () => {
 		const profile = profileFor("trae");
 		assert.equal(profile.mcp.mountBrain, true);
 		assert.equal(profile.mcp.cwdSupported, false);
@@ -353,11 +334,95 @@ describe("trae (verified contract)", () => {
 		);
 		rmSync(home, { recursive: true, force: true });
 	});
+});
 
-	it("routes MCP governance through run_mcp, not only CallMcpTool", () => {
-		const matcher = profileFor("trae").hooks.toolMatcher;
-		assert.match(matcher, /run_mcp/, "Trae calls every MCP tool through the run_mcp meta-tool");
-		assert.match(matcher, /Shell/, "Trae's shell tool is named Shell, not Bash");
+describe("workbuddy (verified contract)", () => {
+	// WorkBuddy was the first host believed to be MCP-only. A probe against a real install
+	// (2026-09-14) overturned that: hooks fire from the `hooks` key of the USER settings file
+	// `~/.workbuddy-ai/settings.json`, hot-reloaded, and `permissionDecision: deny` blocks a
+	// call. Three earlier probe placements — `.codebuddy/hooks.json`, `.workbuddy/hooks.json`
+	// and a plugin's `hooks/hooks.json` — stayed silent, which is what produced the
+	// "channel disabled" reading; the directory is `.workbuddy-ai`, not `.workbuddy`.
+	// It is also the first host that wants the Brain mounted while being user-scope —
+	// which used to key off `profile.id === "cursor"`.
+	it("keeps its MCP config at the user root the host actually reads", () => {
+		const profile = profileFor("workbuddy");
+		assert.equal(profile.verified, true);
+		assert.equal(profile.mcp.scope, "user");
+		assert.equal(profile.mcp.path, ".workbuddy-ai/mcp.json");
+		assert.equal(profile.mcp.mountBrain, true);
+		assert.equal(profile.mcp.cwdSupported, false);
+	});
+
+	it("declares a hook surface in the user settings file, not a plugin manifest", () => {
+		const profile = profileFor("workbuddy");
+		assert.equal(profile.capabilities.hooks, true);
+		assert.equal(profile.hooks.file.scope, "user");
+		assert.equal(profile.hooks.file.path, ".workbuddy-ai/settings.json");
+		assert.equal(profile.hooks.file.keyPath, "hooks");
+		assert.equal(profile.hooks.file.entryShape, "claude-nested");
+	});
+
+	it("maps canonical events onto the host's PascalCase spelling", () => {
+		// The host loader matches `PreToolUse`, not the registry's `preToolUse`.
+		const profile = profileFor("workbuddy");
+		assert.equal(registryFns.hookEventName(profile, "preToolUse"), "PreToolUse");
+		assert.equal(registryFns.hookEventName(profile, "postToolUse"), "PostToolUse");
+		assert.equal(registryFns.hookEventName(profile, "beforeSubmitPrompt"), "UserPromptSubmit");
+	});
+
+	it("takes hook rows now that the profile declares a hook surface", () => {
+		const rows = dedupeEntriesForHost(profileFor("workbuddy"), HOOK_ENTRIES);
+		assert.ok(rows.length > 0, "a hook-capable host is no longer skipped");
+		assert.ok(rows.some((r) => r.event === "PreToolUse"));
+		assert.ok(rows.some((r) => r.event === "PostToolUse"));
+	});
+
+	it("spells the leaf command with doubled slashes, and never as an args array", () => {
+		// Hooks are spawned through Git Bash, where MSYS rewrites `/d` into a drive path and the
+		// whole invocation dies — the single-slash form never fired on a real install. `args` is
+		// ignored outright, so the command has to be one string.
+		const row = hookEntryFor(profileFor("workbuddy"), {
+			hook: "cm-pre-tool",
+			event: "PreToolUse",
+			projectRoot: ROOT,
+		});
+		assert.ok(row, "a hook-capable host gets a row");
+		const leaf = row.hooks[0];
+		assert.match(leaf.command, /^cmd\.exe \/\/d \/\/c "/);
+		assert.match(leaf.command, /cm-pre-tool\.cmd/);
+		assert.ok(!("args" in leaf), "WorkBuddy ignores an args array");
+	});
+});
+
+describe("globbed config paths", () => {
+	// No shipped profile uses a wildcard any more (WorkBuddy's connector path was the last
+	// one, and a real install proved it wrong), but the resolver keeps the behaviour: a host
+	// that namespaces config per install cannot have its uid pinned in the registry.
+	it("prefers the live uuid sibling over the stale default one", () => {
+		const home = mkdtempSync(join(tmpdir(), "cm-glob-live-"));
+		const root = join(home, ".somehost", "connectors");
+		const stale = join(root, "default");
+		const liveUid = join(root, "0f0f0f0f-1111-2222-3333-444455556666");
+		mkdirSync(stale, { recursive: true });
+		mkdirSync(liveUid, { recursive: true });
+		writeFileSync(join(stale, "mcp.json"), "{}");
+		writeFileSync(join(liveUid, "mcp.json"), "{}");
+		writeFileSync(join(liveUid, "connector-states.v3.json"), "{}");
+		const target = { scope: "user", path: ".somehost/connectors/*/mcp.json" };
+		assert.equal(
+			registryFns.resolveConfigFile(target, { home }),
+			join(liveUid, "mcp.json"),
+			"the state-marker sibling is the live profile",
+		);
+	});
+
+	it("falls back to the only sibling when there is no marker to rank", () => {
+		const home = mkdtempSync(join(tmpdir(), "cm-glob-only-"));
+		const dir = join(home, ".somehost", "connectors", "default");
+		mkdirSync(dir, { recursive: true });
+		const target = { scope: "user", path: ".somehost/connectors/*/mcp.json" };
+		assert.equal(registryFns.resolveConfigFile(target, { home }), join(dir, "mcp.json"));
 	});
 });
 

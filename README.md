@@ -1,6 +1,10 @@
 # Token-Mind
 
-ContextMind 的开发仓：面向 Cursor / Coding Agent 的上下文治理与 token 优化基础设施。
+ContextMind 的开发仓：面向 Cursor / Qoder 等 Coding Agent 的上下文治理与 token 优化基础设施。
+
+> **多 IDE 兼容**：已适配 Cursor、Qoder、WorkBuddy（hooks+MCP）；CodeBuddy（MCP only）。
+> WorkBuddy 的 hook 入口是用户级 `~/.workbuddy-ai/settings.json` 的 `hooks` 键，且 hook 经 Git Bash
+> 派生（`cmd.exe //d //c`），详见 [docs/AGENT-HOST-COMPAT.md](docs/AGENT-HOST-COMPAT.md) §3.4。
 
 > 当前状态：**S2+S3 切片上线，产品未完成**（spec G0–G8 未全部执行）。见
 > [docs/reports/SLICE_REPORT_S2_S3.md](docs/reports/SLICE_REPORT_S2_S3.md)。

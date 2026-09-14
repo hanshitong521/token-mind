@@ -21,10 +21,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(HERE, "..", "cli.mjs");
 
 let project;
+let fakeHome;
 
+/**
+ * Every CLI call gets an isolated home. Without it a user-scope host whose config
+ * directory exists on the developer's box (WorkBuddy ships `~/.workbuddy/connectors/`)
+ * is selected by `selectInstallHosts` and the install writes the real
+ * `~/.workbuddy/connectors/<uid>/mcp.json` — a test that edits the machine it runs on.
+ * `CONTEXTMIND_INSTALL_HOME` is the installer's own escape hatch for exactly this; both
+ * the write path (`userHome()`) and the host scan must honour it.
+ */
 function cli(args, env = {}) {
 	const res = spawnSync(process.execPath, [CLI, ...args], {
-		env: { ...process.env, ...env },
+		env: { ...process.env, CONTEXTMIND_INSTALL_HOME: fakeHome, ...env },
 		encoding: "utf8",
 		timeout: 120_000,
 		windowsHide: true,
@@ -39,6 +48,7 @@ function readJson(path) {
 
 before(() => {
 	project = mkdtempSync(join(tmpdir(), "cm-cli-"));
+	fakeHome = mkdtempSync(join(tmpdir(), "cm-home-"));
 	mkdirSync(join(project, ".cursor"), { recursive: true });
 	writeFileSync(
 		join(project, ".cursor", "mcp.json"),

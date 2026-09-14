@@ -39,6 +39,7 @@
         "path": ".cursor/mcp.json",
         "keyPath": "mcpServers",
         "entryShape": "stdio",
+        "mountBrain": true,
         "fields": {}
       }
     },
@@ -115,6 +116,57 @@
         "entryShape": "stdio",
         "fields": { "autoApprove": [], "timeout": 60000, "disabled": false }
       }
+    },
+    {
+      "id": "workbuddy",
+      "label": "WorkBuddy",
+      "verified": true,
+      "capabilities": {
+        "hooks": true,
+        "mcp": true,
+        "failClosed": false,
+        "outputRewrite": true
+      },
+      "detect": {
+        "transcriptPaths": ["\\.workbuddy-ai"],
+        "configDirs": ["\\.workbuddy-ai"],
+        "eventCase": null,
+        "toolPayloadKey": "tool_response",
+        "mcpToolPrefix": "mcp__"
+      },
+      "mcpClientInfo": ["workbuddy"],
+      "hooks": {
+        "file": {
+          "scope": "user",
+          "path": ".workbuddy-ai/settings.json",
+          "keyPath": "hooks",
+          "entryShape": "claude-nested",
+          "leafCommandString": "cmd.exe //d //c \"{script}\"",
+          "rootFields": {}
+        },
+        "eventNames": {
+          "preToolUse": "PreToolUse",
+          "postToolUse": "PostToolUse",
+          "sessionStart": "SessionStart",
+          "sessionEnd": "SessionEnd",
+          "beforeSubmitPrompt": "UserPromptSubmit",
+          "stop": "Stop"
+        },
+        "asyncEvents": [],
+        "matcherEvents": ["PreToolUse", "PostToolUse"],
+        "toolMatcher": "^(Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep|Task|Agent|WebFetch|WebSearch|BashOutput|KillShell|mcp__.*)$",
+        "env": { "CONTEXTMIND_HOST": "workbuddy" }
+      },
+      "mcp": {
+        "scope": "user",
+        "path": ".workbuddy-ai/mcp.json",
+        "keyPath": "mcpServers",
+        "entryShape": "stdio",
+        "mountBrain": true,
+        "cwdSupported": false,
+        "fields": {}
+      },
+      "notes": "Verified 2026-09-14 on a real WorkBuddy install. Hooks live in the `hooks` key of the USER settings file ~/.workbuddy-ai/settings.json (NOT .workbuddy/, NOT a plugin hooks/hooks.json — those three placements stayed silent and produced the earlier 'channel disabled' reading). Config is hot-reloaded: edits take effect on the next tool call, no session restart. Two host quirks are load-bearing: (1) hooks are spawned through Git Bash, so `cmd.exe /d /c` is mangled by MSYS path conversion and `//d //c` is required; (2) only the `command` string is honoured — an `args` array is ignored and the hook silently never runs. PostToolUse payloads: Read carries the file body as a string and `hookSpecificOutput.updatedToolOutput` replaces it (proven); Bash carries only metadata (exitCode/signal/truncated byte counts) with NO stdout, so the Shell Output Gate has nothing to compress on this host. PreToolUse `permissionDecision: deny` is honoured and blocks the call. `tool_name` arrives in CLI spelling (Bash/Read/Write/...), not the IDE spelling (execute_command/read_file)."
     },
     {
       "id": "codex",
