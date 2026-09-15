@@ -1,6 +1,6 @@
 # TokenMind Runtime v2 slice
 
-- 2026-09-11T16:39:14.395Z
+- 2026-09-15T09:32:57.056Z
 - client: cmhook.exe
-- p50/p95/p99: 53/77/77 ms
+- p50/p95/p99: 60/86/86 ms
 - production pass: false

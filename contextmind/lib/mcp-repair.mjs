@@ -74,6 +74,7 @@ export function brainStdioEntry(projectRoot, cfg, profile = null) {
 			PYTHONUNBUFFERED: "1",
 			PYTHONIOENCODING: "utf-8",
 			BRAIN_DEFAULT_PROJECT_ID: projectId,
+			BRAIN_UPLOADER: String(profile?.id ?? "unknown"),
 			BRAIN_REPO_ROOT: resolve(projectRoot),
 			BRAIN_REPO_ROOT_SHEJIUPRO: resolve(projectRoot),
 			BRAIN_PROJECT_ALIASES: "shejiuTest=shejiuPro",
@@ -144,12 +145,17 @@ export function repairMcpMounts({ projectRoot, serverPath, hosts, readJson, writ
 		// docs/AGENT-HOST-COMPAT.md states for the rest of this layer).
 		if (profile.mcp?.mountBrain === true) {
 			const prevBrain = servers["project-brain"];
-			const needs = !prevBrain || prevBrain.url || wheelNode(prevBrain?.command);
+			const needs =
+				!prevBrain ||
+				prevBrain.url ||
+				wheelNode(prevBrain?.command) ||
+				(profile.mcp?.cwdSupported === false && Object.hasOwn(prevBrain, "cwd")) ||
+				prevBrain?.env?.BRAIN_UPLOADER !== profile.id;
 			if (needs) {
 				const brain = brainStdioEntry(projectRoot, projCfg, profile);
 				if (brain) {
 					servers["project-brain"] = brain;
-					changes.push(prevBrain?.url ? "project-brain url→stdio" : "project-brain stdio");
+					changes.push(prevBrain?.url ? "project-brain url→stdio" : "project-brain stdio/identity");
 				} else {
 					changes.push("project-brain skipped (venv python missing)");
 				}

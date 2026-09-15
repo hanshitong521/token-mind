@@ -114,6 +114,8 @@
         "path": ".codebuddy/mcp.json",
         "keyPath": "mcpServers",
         "entryShape": "stdio",
+        "mountBrain": true,
+        "cwdSupported": false,
         "fields": { "autoApprove": [], "timeout": 60000, "disabled": false }
       }
     },
